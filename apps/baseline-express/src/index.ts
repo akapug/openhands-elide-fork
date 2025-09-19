@@ -7,12 +7,12 @@ app.use(express.json())
 
 const PORT = Number(process.env.PORT || 8081)
 
-app.get('/healthz', (_req, res) => {
+app.get('/healthz', (_req: any, res: any) => {
   res.status(200).type('text/plain').send('ok\n')
 })
 
 // Synthetic SSE endpoint mirroring Elide server's synthetic mode
-app.post('/api/chat/completions', async (req, res) => {
+app.post('/api/chat/completions', async (req: any, res: any) => {
   const frames = Number(req.body?.frames ?? process.env.SYN_FRAMES ?? 200)
   const delayMs = Number(req.body?.delay_ms ?? process.env.SYN_DELAY_MS ?? 5)
   const bytesPerFrame = Number(req.body?.bytes_per_frame ?? process.env.SYN_BYTES ?? 64)
