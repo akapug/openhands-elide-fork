@@ -3,11 +3,22 @@ import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createGzip } from 'node:zlib'
+import { existsSync, createReadStream, createWriteStream, statSync, mkdirSync, writeFileSync } from 'node:fs'
+import { extname, join, resolve } from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 import { register, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client'
 
 const PORT = Number(process.env.PORT || 8080);
 const VITE_DEV_URL = process.env.VITE_DEV_URL || "http://localhost:5173";
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const UI_DIST_DIR = process.env.UI_DIST_DIR || resolve(__dirname, '../../ui/dist')
+const REPO_ROOT = resolve(__dirname, '../../..')
+const RESULTS_DIR = resolve(REPO_ROOT, 'packages/bench/results')
+const GENERATE_INDEX = resolve(REPO_ROOT, 'packages/bench/scripts/generate-index.mjs')
+
+const CLI_RUNS = new Map<number, { logPath: string, status: 'running'|'done'|'error' }>()
 
 collectDefaultMetrics()
 const chatRequests = new Counter({ name: 'chat_requests_total', help: 'Chat requests', labelNames: ['runtime','model','status'] })
@@ -226,6 +237,31 @@ async function handleModels(req: any, res: any) {
   }
 }
 
+
+async function tryServeStatic(req: any, res: any): Promise<boolean> {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host}`)
+    let p = url.pathname
+    if (p === '/' || p === '') p = '/index.html'
+    const fsPath = resolve(UI_DIST_DIR, '.' + p)
+    if (existsSync(fsPath) && statSync(fsPath).isFile()) {
+      const ext = fsPath.split('.').pop()?.toLowerCase()
+      const type = ext === 'html' ? 'text/html' : ext === 'js' ? 'text/javascript' : ext === 'css' ? 'text/css' : ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : 'application/octet-stream'
+      res.writeHead(200, { 'content-type': type })
+      createReadStream(fsPath).pipe(res)
+      return true
+    }
+    // SPA fallback
+    const indexPath = resolve(UI_DIST_DIR, 'index.html')
+    if (existsSync(indexPath)) {
+      res.writeHead(200, { 'content-type': 'text/html' })
+      createReadStream(indexPath).pipe(res)
+      return true
+    }
+  } catch {}
+  return false
+}
+
 const server = createServer(async (req, res) => {
   const url = req.url || "/";
   if (url === "/tool") {
@@ -244,6 +280,157 @@ const server = createServer(async (req, res) => {
     }
     return
   }
+  if (url.startsWith('/micro/plain')) {
+    try {
+      const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+      const bytes = Math.max(1, Number(q.get('bytes') || '32'))
+      const useGzip = String(q.get('gzip') || '').toLowerCase() === '1' || String(q.get('gzip') || '').toLowerCase() === 'true'
+
+      const buf = Buffer.alloc(bytes, 120) // 'x'
+      const headers: Record<string,string> = { 'content-type':'text/plain', 'content-length': String(buf.length) }
+      if (useGzip) { delete headers['content-length']; headers['content-encoding'] = 'gzip' }
+      res.writeHead(200, headers)
+      if (useGzip) { const gz = createGzip(); gz.pipe(res); gz.end(buf) } else res.end(buf)
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type':'text/plain' }); res.end(String(e?.message||e))
+    }
+    return
+  }
+  if (url.startsWith('/micro/chunked')) {
+    try {
+      const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+      const bytesPer = Math.max(1, Number(q.get('bytes') || '32'))
+      const chunks = Math.max(1, Number(q.get('chunks') || '1'))
+      const delay = Math.max(0, Number(q.get('delay_ms') || '0'))
+      const useGzip = String(q.get('gzip') || '').toLowerCase() === '1' || String(q.get('gzip') || '').toLowerCase() === 'true'
+      const word = Buffer.alloc(bytesPer, 120)
+      const headers: Record<string,string> = { 'content-type':'application/octet-stream', 'transfer-encoding':'chunked', 'cache-control':'no-cache' }
+      if (useGzip) headers['content-encoding'] = 'gzip'
+      res.writeHead(200, headers)
+      const writer: any = useGzip ? createGzip() : res
+      if (useGzip) (writer as any).pipe(res)
+      const sleep = (ms: number) => new Promise(r=>setTimeout(r, ms))
+      for (let i=0;i<chunks;i++) {
+        writer.write(word)
+        if (delay>0) await sleep(delay)
+      }
+      if (useGzip) (writer as any).end(); else res.end()
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type':'text/plain' }); res.end(String(e?.message||e))
+    }
+    return
+  }
+  if (url === '/bench/ui-save' && req.method === 'POST') {
+    try {
+      const chunks: Buffer[] = []
+      for await (const ch of req) chunks.push(ch)
+      const payload = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
+      const ts = Date.now()
+      mkdirSync(RESULTS_DIR, { recursive: true })
+      const file = resolve(RESULTS_DIR, `ui-${ts}.json`)
+      writeFileSync(file, JSON.stringify(payload, null, 2))
+      await new Promise<void>((resolveDone) => {
+        const p = spawn(process.execPath, [GENERATE_INDEX], { cwd: REPO_ROOT, stdio: 'ignore' })
+        p.on('close', () => resolveDone())
+        p.on('error', () => resolveDone())
+      })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, file: `packages/bench/results/ui-${ts}.json` }))
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
+    }
+    return
+  }
+
+  if (url === '/bench/run-cli' && req.method === 'POST') {
+    try {
+      const chunks: Buffer[] = []
+      for await (const ch of req) chunks.push(ch)
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
+      const concList: number[] = Array.isArray(body.concurrency) ? body.concurrency : []
+      const totalList: number[] = Array.isArray(body.totals) ? body.totals : concList.map((c:number)=>c*4)
+      const frames = Number(body.frames ?? 200)
+      const delay_ms = Number(body.delay_ms ?? 5)
+      const bytes = Number(body.bytes ?? 256)
+      const cpu_spin_ms = Number(body.cpu_spin_ms ?? 0)
+      const fanout = Number(body.fanout ?? 0)
+      const fanout_delay_ms = Number(body.fanout_delay_ms ?? 0)
+      const gzip = !!body.gzip
+      const startServers = body.startServers !== false
+      const wslNode = !!body.wslNode
+      const wslFastapi = !!body.wslFastapi
+      const ts = Date.now()
+      mkdirSync(RESULTS_DIR, { recursive: true })
+      const logPath = resolve(RESULTS_DIR, `cli-${ts}.log`)
+      const out = createWriteStream(logPath)
+      const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/trio.js')
+      const env = {
+        ...process.env,
+        TRIO_START_SERVERS: startServers ? '1' : '',
+        TRIO_MODE: 'sequential',
+        TRIO_CONCURRENCY_LIST: concList.join(','),
+        TRIO_TOTAL_LIST: totalList.join(','),
+        TRIO_WSL_NODE: wslNode ? '1' : '',
+        TRIO_WSL_FASTAPI: wslFastapi ? '1' : '',
+        SYN_FRAMES: String(frames),
+        SYN_DELAY_MS: String(delay_ms),
+        SYN_BYTES: String(bytes),
+        SYN_CPU_SPIN_MS: String(cpu_spin_ms),
+        SYN_FANOUT: String(fanout),
+        SYN_FANOUT_DELAY_MS: String(fanout_delay_ms),
+        SYN_GZIP: gzip ? '1' : '',
+      }
+      const p = spawn(process.execPath, [cliPath], { cwd: REPO_ROOT, env })
+      p.stdout?.on('data', (d)=> out.write(d))
+      p.stderr?.on('data', (d)=> out.write(d))
+      const pid = p.pid || Math.floor(Math.random()*1e9)
+      CLI_RUNS.set(pid, { logPath, status: 'running' })
+      p.on('close', async (code)=>{
+        out.end(() => undefined)
+        try {
+          const g = spawn(process.execPath, [GENERATE_INDEX], { cwd: REPO_ROOT, stdio: 'ignore' })
+          g.on('close', ()=>{})
+        } catch {}
+        CLI_RUNS.set(pid, { logPath, status: code===0 ? 'done' : 'error' })
+      })
+      res.writeHead(200, { 'content-type':'application/json' })
+      res.end(JSON.stringify({ ok:true, pid, log: `packages/bench/results/${logPath.split(/[/\\]/).pop()}` }))
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type':'application/json' })
+      res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
+    }
+    return
+  }
+
+  if (url.startsWith('/bench/run-cli/status')) {
+    const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+    const pid = Number(q.get('pid')||'0')
+    const info = CLI_RUNS.get(pid)
+    res.writeHead(200, { 'content-type':'application/json' })
+    res.end(JSON.stringify(info ? { ok:true, pid, ...info } : { ok:false, error: 'not_found' }))
+    return
+  }
+
+  if (url.startsWith('/bench/run-cli/cancel') && req.method === 'POST') {
+    try {
+      const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+      const pid = Number(q.get('pid')||'0')
+      if (pid) {
+        try { process.kill(pid) } catch {}
+        const info = CLI_RUNS.get(pid)
+        if (info) CLI_RUNS.set(pid, { ...info, status: 'error' })
+      }
+      res.writeHead(200, { 'content-type':'application/json' })
+      res.end(JSON.stringify({ ok:true }))
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type':'application/json' })
+      res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
+    }
+    return
+  }
+
+
 
   if (url === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" });
@@ -273,7 +460,8 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ error: "not implemented" }));
     return;
   }
-  // Proxy any other request to Vite dev server
+  // Try serving built UI; otherwise proxy to Vite dev
+  if (await tryServeStatic(req, res)) return;
   proxyTo(VITE_DEV_URL, req, res);
 });
 

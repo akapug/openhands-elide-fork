@@ -49,9 +49,9 @@ function fmt(n) {
 }
 
 async function main() {
-  const files = (await fs.readdir(resultsDir))
-    .filter((f) => f.startsWith('bench-') && f.endsWith('.html'))
-    .sort();
+  const all = await fs.readdir(resultsDir)
+  const files = all.filter((f) => f.startsWith('bench-') && f.endsWith('.html')).sort();
+  const uiFiles = all.filter((f) => f.startsWith('ui-') && f.endsWith('.json')).sort();
 
   const entries = [];
   for (const f of files) {
@@ -60,6 +60,15 @@ async function main() {
     const metrics = parseMetrics(html);
     const meta = labelFromFilename(f);
     entries.push({ file: f, ...meta, ...metrics });
+  }
+
+  const uiRuns = [];
+  for (const f of uiFiles) {
+    try {
+      const full = path.join(resultsDir, f);
+      const json = JSON.parse(await fs.readFile(full, 'utf8'));
+      uiRuns.push({ file: f, ...json });
+    } catch {}
   }
 
   // group by scenario (conc x total)
@@ -100,6 +109,7 @@ async function main() {
       out += '<tr>' +
         `<td>${htmlEscape(r.server)}</td>` +
         `<td><a href="${encodeURI(r.file)}">${htmlEscape(r.file)}</a></td>` +
+
         `<td>${fmt(r.rps)}</td>` +
         `<td>${fmt(r.ttft_p50)}</td>` +
         `<td>${fmt(r.ttft_p95)}</td>` +
@@ -109,6 +119,41 @@ async function main() {
     }
     out += '</tbody></table>';
   }
+
+  if (uiRuns.length) {
+    out += '<h2>UI runs (from browser)</h2>';
+    for (const ur of uiRuns) {
+      const meta = ur.meta || {};
+      const runs = ur.runs || [];
+      out += `<h3>${htmlEscape(ur.file)} — target=${htmlEscape(meta.target||'')}, mode=${htmlEscape(meta.mode||'')}</h3>`;
+      out += '<table><thead><tr>' +
+             '<th>concurrency</th><th>total</th><th>bytes</th><th>frames</th><th>delay_ms</th><th>fanout</th><th>cpu_spin_ms</th><th>gzip</th>'+
+             '<th>rps</th><th>ttft_p50</th><th>ttft_p95</th><th>ttft_p99</th><th>dur_p50</th><th>dur_p95</th><th>dur_p99</th>'+
+             '</tr></thead><tbody>';
+      for (const r of runs) {
+        const s = r.summary || {};
+        out += '<tr>' +
+          `<td>${htmlEscape(r.concurrency)}</td>`+
+          `<td>${htmlEscape(r.total)}</td>`+
+          `<td>${htmlEscape(r.bytes||'')}</td>`+
+          `<td>${htmlEscape(r.frames||'')}</td>`+
+          `<td>${htmlEscape(r.delay_ms||'')}</td>`+
+          `<td>${htmlEscape(r.fanout||'')}</td>`+
+          `<td>${htmlEscape(r.cpu_spin_ms||'')}</td>`+
+          `<td>${htmlEscape(r.gzip?'1':'0')}</td>`+
+          `<td>${fmt(s.rps)}</td>`+
+          `<td>${fmt(s.ttft_p50)}</td>`+
+          `<td>${fmt(s.ttft_p95)}</td>`+
+          `<td>${fmt(s.ttft_p99)}</td>`+
+          `<td>${fmt(s.dur_p50)}</td>`+
+          `<td>${fmt(s.dur_p95)}</td>`+
+          `<td>${fmt(s.dur_p99)}</td>`+
+          '</tr>';
+      }
+      out += '</tbody></table>';
+    }
+  }
+
 
   const outPath = path.join(resultsDir, 'index.html');
   await fs.writeFile(outPath, out);

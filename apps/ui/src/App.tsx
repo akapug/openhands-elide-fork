@@ -123,7 +123,7 @@ export default function App() {
           <textarea ref={taRef} rows={4} style={{ width:'100%' }} value={input} onChange={e=>setInput(e.target.value)} />
           <button onClick={send} disabled={streaming}>Send</button>
         </div>
-        <div style={{ height:'70vh', overflow:'auto', border:'1px solid #eee', padding:8 }}>
+        <div style={{ height:'40vh', overflow:'auto', border:'1px solid #eee', padding:8 }}>
           {messages.map((m,i)=> (
             <div key={i} style={{ whiteSpace:'pre-wrap', margin:'8px 0' }}>
               <b>{m.role}:</b> {m.content}
@@ -135,8 +135,215 @@ export default function App() {
             <b>Reasoning:</b> {reasoning}
           </div>
         )}
+
+        <hr style={{ margin:'16px 0' }} />
+        <h3>Bench (local :8080)</h3>
+        <BenchPanel />
       </main>
     </div>
   )
 }
+
+function BenchPanel() {
+  const [target, setTarget] = useState('http://localhost:8080')
+  const [modesSuite, setModesSuite] = useState<string[]>(['sse'])
+  const [concList, setConcList] = useState<number[]>([8,32,64,128])
+  const [customConc, setCustomConc] = useState('')
+  const cancelRef = useRef(false)
+  const [cliPid, setCliPid] = useState<number|null>(null)
+
+  const [mode, setMode] = useState<'sse'|'micro-plain'|'micro-chunked'>('sse')
+  const [concurrency, setConcurrency] = useState(64)
+  const [total, setTotal] = useState(256)
+  const [bytes, setBytes] = useState(64)
+  const [frames, setFrames] = useState(200)
+  const [delayMs, setDelayMs] = useState(5)
+  const [fanout, setFanout] = useState(0)
+  const [cpuSpinMs, setCpuSpinMs] = useState(0)
+  const [gzip, setGzip] = useState(true)
+  const [running, setRunning] = useState(false)
+  const [summary, setSummary] = useState<any|null>(null)
+
+  const p = (arr:number[], q:number)=>{
+    if (!arr.length) return 0; const a=[...arr].sort((a,b)=>a-b); const i=Math.min(a.length-1, Math.max(0, Math.floor(q*(a.length-1)))); return a[i]
+  }
+
+  async function runOnce(): Promise<{ttft?:number, dur:number}> {
+    const t0 = performance.now()
+    if (mode === 'sse') {
+      const res = await fetch('/api/chat/completions', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'synthetic', runtime: 'elide',
+          frames, delay_ms: delayMs, bytes_per_frame: bytes,
+          cpu_spin_ms: cpuSpinMs, fanout, gzip,
+        })
+      })
+      if (!res.ok || !res.body) return { dur: performance.now()-t0 }
+      const reader = res.body.getReader(); let ttft: number | undefined
+      const readStart = performance.now()
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break
+        if (ttft === undefined) ttft = performance.now()-readStart
+      }
+      return { ttft, dur: performance.now()-t0 }
+    }
+    if (mode === 'micro-plain') {
+      const url = new URL('/micro/plain', target)
+      url.searchParams.set('bytes', String(bytes))
+      if (gzip) url.searchParams.set('gzip', '1')
+      const res = await fetch(String(url)); await res.arrayBuffer()
+      return { dur: performance.now()-t0 }
+    }
+    // micro-chunked
+    const url = new URL('/micro/chunked', target)
+    url.searchParams.set('bytes', String(bytes)); url.searchParams.set('chunks', '4')
+    url.searchParams.set('delay_ms', String(delayMs)); if (gzip) url.searchParams.set('gzip', '1')
+    const res = await fetch(String(url)); const r0 = performance.now();
+    if (!res.body) return { dur: performance.now()-t0 }
+    const reader = res.body.getReader(); let ttft: number | undefined
+    while (true) { const { done } = await reader.read(); if (ttft===undefined) ttft = performance.now()-r0; if (done) break }
+    return { ttft, dur: performance.now()-t0 }
+  }
+
+  async function runBench() {
+    setRunning(true); setSummary(null)
+    const ttfts:number[] = [], durs:number[] = []
+    let inflight = 0, done = 0
+    async function spawn() {
+      while (done < total) {
+        if (inflight >= concurrency) { await new Promise(r=>setTimeout(r,1)); continue }
+        inflight++
+        runOnce().then(({ttft, dur})=>{ if (ttft!==undefined) ttfts.push(ttft); durs.push(dur) }).finally(()=>{ inflight--; done++ })
+      }
+      while (inflight>0) await new Promise(r=>setTimeout(r,1))
+    }
+    await spawn()
+    const elapsed = durs.length ? Math.max(...durs) : 0
+    const rps = elapsed>0 ? (total * 1000) / elapsed : 0
+
+    setSummary({
+      count: total, rps: Number(rps.toFixed(2)),
+      ttft_p50: ttfts.length?Number(p(ttfts,0.5).toFixed(2)):undefined,
+      ttft_p95: ttfts.length?Number(p(ttfts,0.95).toFixed(2)):undefined,
+      ttft_p99: ttfts.length?Number(p(ttfts,0.99).toFixed(2)):undefined,
+      dur_p50: Number(p(durs,0.5).toFixed(2)), dur_p95: Number(p(durs,0.95).toFixed(2)), dur_p99: Number(p(durs,0.99).toFixed(2)),
+    })
+    setRunning(false)
+  }
+
+  async function benchSummary(c:number, t:number) {
+    const ttfts:number[] = [], durs:number[] = []
+    let inflight = 0, done = 0
+    async function spawn() {
+      while (done < t) {
+        if (inflight >= c) { await new Promise(r=>setTimeout(r,1)); continue }
+        inflight++
+        runOnce().then(({ttft, dur})=>{ if (ttft!==undefined) ttfts.push(ttft); durs.push(dur) }).finally(()=>{ inflight--; done++ })
+      }
+      while (inflight>0) await new Promise(r=>setTimeout(r,1))
+    }
+    await spawn()
+    const elapsed = durs.length ? Math.max(...durs) : 0
+    const rps = elapsed>0 ? (t * 1000) / elapsed : 0
+    return {
+      count: t, rps: Number(rps.toFixed(2)),
+      ttft_p50: ttfts.length?Number(p(ttfts,0.5).toFixed(2)):undefined,
+      ttft_p95: ttfts.length?Number(p(ttfts,0.95).toFixed(2)):undefined,
+      ttft_p99: ttfts.length?Number(p(ttfts,0.99).toFixed(2)):undefined,
+      dur_p50: Number(p(durs,0.5).toFixed(2)), dur_p95: Number(p(durs,0.95).toFixed(2)), dur_p99: Number(p(durs,0.99).toFixed(2)),
+    }
+  }
+
+  async function runFullSuite() {
+    setRunning(true); setSummary(null)
+    const tiers = [8, 32, 64, 128]
+    const runs:any[] = []
+    for (const c of tiers) {
+
+
+      const t = c * 4
+      const s = await benchSummary(c, t)
+      runs.push({
+        concurrency: c, total: t, bytes, frames, delay_ms: delayMs, fanout, cpu_spin_ms: cpuSpinMs, gzip, summary: s,
+      })
+    }
+    await fetch('/bench/ui-save', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ meta: { target, mode, ts: Date.now() }, runs })
+    })
+    setRunning(false)
+
+  async function runOnceMode(m: 'sse'|'micro-plain'|'micro-chunked', abort?: AbortSignal): Promise<{ttft?:number, dur:number}> {
+    const t0 = performance.now()
+    try {
+      if (m === 'sse') {
+        const ctrl = new AbortController(); const signal = abort || ctrl.signal
+        const res = await fetch('/api/chat/completions', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+          body: JSON.stringify({ model: 'synthetic', runtime: 'elide', frames, delay_ms: delayMs, bytes_per_frame: bytes, cpu_spin_ms: cpuSpinMs, fanout, gzip })
+        })
+        if (!res.ok || !res.body) return { dur: performance.now()-t0 }
+        const reader = res.body.getReader(); let ttft: number | undefined
+        const readStart = performance.now()
+        while (true) { const { done } = await reader.read(); if (ttft===undefined) ttft = performance.now()-readStart; if (done) break }
+        return { ttft, dur: performance.now()-t0 }
+      }
+      if (m === 'micro-plain') {
+        const url = new URL('/micro/plain', target)
+        url.searchParams.set('bytes', String(bytes)); if (gzip) url.searchParams.set('gzip','1')
+        const res = await fetch(String(url), { signal: abort }); await res.arrayBuffer(); return { dur: performance.now()-t0 }
+      }
+      // micro-chunked
+      const url = new URL('/micro/chunked', target)
+      url.searchParams.set('bytes', String(bytes)); url.searchParams.set('chunks','4'); url.searchParams.set('delay_ms', String(delayMs)); if (gzip) url.searchParams.set('gzip','1')
+      const res = await fetch(String(url), { signal: abort }); const r0 = performance.now(); if (!res.body) return { dur: performance.now()-t0 }
+      const reader = res.body.getReader(); let ttft: number | undefined
+      while (true) { const { done } = await reader.read(); if (ttft===undefined) ttft = performance.now()-r0; if (done) break }
+      return { ttft, dur: performance.now()-t0 }
+    } catch { return { dur: performance.now()-t0 } }
+  }
+
+  }
+
+
+  return (
+    <div style={{ border:'1px solid #eee', padding:8 }}>
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+        <label>Target <input value={target} onChange={e=>setTarget(e.target.value)} style={{ width:220 }} /></label>
+        <label>Mode
+          <select value={mode} onChange={e=>setMode(e.target.value as any)}>
+            <option value="sse">SSE synthetic</option>
+            <option value="micro-plain">Micro plain</option>
+            <option value="micro-chunked">Micro chunked</option>
+          </select>
+        </label>
+        <label>Concurrency <input type="number" value={concurrency} onChange={e=>setConcurrency(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label>Total <input type="number" value={total} onChange={e=>setTotal(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label>Bytes <input type="number" value={bytes} onChange={e=>setBytes(Number(e.target.value))} style={{ width:90 }} /></label>
+        {mode==='sse' && (<>
+          <label>Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
+          <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
+          <label>Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
+          <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
+        </>)}
+        {mode!=='sse' && (
+          <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
+        )}
+        <label><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
+        <button onClick={runBench} disabled={running}>{running?'Running...':'Run'}</button>
+        <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results/index.html via /bench/ui-save">{running?'Running...':'Run full sweep + save'}</button>
+      </div>
+
+
+      {summary && (
+        <div style={{ marginTop:8, fontFamily:'monospace' }}>
+          RPS {summary.rps} | ttft p50/p95/p99: {summary.ttft_p50 ?? '-'} / {summary.ttft_p95 ?? '-'} / {summary.ttft_p99 ?? '-'} ms | dur p50/p95/p99: {summary.dur_p50} / {summary.dur_p95} / {summary.dur_p99} ms
+        </div>
+      )}
+    </div>
+  )
+}
+
 

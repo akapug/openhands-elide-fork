@@ -1,0 +1,27 @@
+{
+  "meta": {
+    "target": "http://localhost:8080",
+    "mode": "sse"
+  },
+  "runs": [
+    {
+      "concurrency": 64,
+      "total": 256,
+      "bytes": 16,
+      "frames": 2,
+      "delay_ms": 0,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": false,
+      "summary": {
+        "rps": 3377.31,
+        "ttft_p50": 4.4,
+        "ttft_p95": 11.4,
+        "ttft_p99": 11.8,
+        "dur_p50": 49,
+        "dur_p95": 68.4,
+        "dur_p99": 73.3
+      }
+    }
+  ]
+}
