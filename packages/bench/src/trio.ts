@@ -1,4 +1,19 @@
 import { spawn } from 'node:child_process'
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
+
+function resultsDir() { return repoRoot() + '/packages/bench/results' }
+function writeFail(out: string, name: string, err: any) {
+  try {
+    mkdirSync(resultsDir(), { recursive: true })
+    const p = resolvePath(resultsDir(), out)
+    const msg = typeof err === 'string' ? err : (err?.stack || err?.message || String(err))
+    const html = `<!doctype html><meta charset="utf-8"/><title>FAILED ${name}</title><pre>${escapeHtml(msg)}</pre>`
+    writeFileSync(p, html)
+    process.stderr.write(`[${name}][err] wrote failure placeholder ${out}\n`)
+  } catch {}
+}
+function escapeHtml(s:string){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'} as any)[c]||c) }
 
 function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<string, string> = {}) {
   return new Promise<void>((resolve, reject) => {
@@ -173,15 +188,18 @@ async function main() {
         const outX = `bench-express.${tier.c}x${tier.t}.html`
         const outF = `bench-fastapi.${tier.c}x${tier.t}.html`
         if (sequential) {
-          await runSweep('elide','http://localhost:8080', outE, envElide)
-          await runSweep('express','http://localhost:8081', outX, envExpress)
-          await runSweep('fastapi','http://localhost:8082', outF, envFastapi)
+          try { await runSweep('elide','http://localhost:8080', outE, envElide) } catch (e) { writeFail(outE,'elide',e) }
+          try { await runSweep('express','http://localhost:8081', outX, envExpress) } catch (e) { writeFail(outX,'express',e) }
+          try { await runSweep('fastapi','http://localhost:8082', outF, envFastapi) } catch (e) { writeFail(outF,'fastapi',e) }
         } else {
-          await Promise.all([
+          const results = await Promise.allSettled([
             runSweep('elide','http://localhost:8080', outE, envElide),
             runSweep('express','http://localhost:8081', outX, envExpress),
             runSweep('fastapi','http://localhost:8082', outF, envFastapi),
           ])
+          if (results[0].status==='rejected') writeFail(outE,'elide',(results[0] as any).reason)
+          if (results[1].status==='rejected') writeFail(outX,'express',(results[1] as any).reason)
+          if (results[2].status==='rejected') writeFail(outF,'fastapi',(results[2] as any).reason)
         }
       }
 

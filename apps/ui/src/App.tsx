@@ -163,6 +163,11 @@ function BenchPanel() {
   const [gzip, setGzip] = useState(true)
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState<any|null>(null)
+  // Apex search settings
+  const [apexTtftP95Max, setApexTtftP95Max] = useState(250)
+  const [apexStart, setApexStart] = useState(32)
+  const [apexMax, setApexMax] = useState(8192)
+
 
   const p = (arr:number[], q:number)=>{
     if (!arr.length) return 0; const a=[...arr].sort((a,b)=>a-b); const i=Math.min(a.length-1, Math.max(0, Math.floor(q*(a.length-1)))); return a[i]
@@ -283,6 +288,60 @@ function BenchPanel() {
     setRunning(false)
   }
 
+  async function runBinarySearch() {
+    setRunning(true); setSummary(null)
+    const trials:any[] = []
+    const m0 = mode
+    const metricOf = (s:any)=> (s?.ttft_p95 ?? s?.dur_p95 ?? Infinity)
+    const isOk = (s:any)=> metricOf(s) <= apexTtftP95Max
+    // probe function that records
+    const probe = async (c:number)=>{
+      const t = Math.max(4, c*4)
+      const s = await benchSummary(c, t)
+      trials.push({ mode, concurrency:c, total:t, bytes, frames, delay_ms:delayMs, fanout, cpu_spin_ms:cpuSpinMs, gzip, summary: s })
+      return s
+    }
+    try{
+      // doubling phase
+      let lo = Math.max(1, apexStart)
+      let hi = lo
+      setMode(m0) // ensure unchanged
+      await new Promise(r=>setTimeout(r,0))
+      let s = await probe(hi)
+      if (!isOk(s)){
+        // decrease to find any acceptable
+        while (lo > 1){
+          hi = lo; lo = Math.max(1, Math.floor(lo/2))
+          s = await probe(lo)
+          if (isOk(s)) break
+          if (lo<=1) break
+        }
+        if (!isOk(s)) {
+          await fetch('/bench/ui-save', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ meta:{ target, type:'binary_search', mode:m0, threshold:apexTtftP95Max, ts:Date.now() }, trials }) })
+          setRunning(false); return
+        }
+      } else {
+        // grow until we fail or reach apexMax
+        while (isOk(s) && hi < apexMax){
+          lo = hi
+          hi = Math.min(apexMax, hi*2)
+          s = await probe(hi)
+        }
+      }
+      // binary search
+      while (hi - lo > 1){
+        const mid = Math.floor((lo+hi)/2)
+        const sm = await probe(mid)
+        if (isOk(sm)) lo = mid; else hi = mid
+      }
+      const best = trials.reduce((a:any,b:any)=> (b.summary?.rps ?? 0) > (a.summary?.rps ?? 0) ? b : a, trials[0])
+      await fetch('/bench/ui-save', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ meta:{ target, type:'binary_search', mode:m0, threshold:apexTtftP95Max, ts:Date.now(), best:{concurrency:best?.concurrency, rps:best?.summary?.rps} }, trials }) })
+    } finally {
+      setMode(m0)
+      setRunning(false)
+    }
+  }
+
 
   const [cliStatus, setCliStatus] = useState<string>('')
 
@@ -295,6 +354,7 @@ function BenchPanel() {
       setCliStatus('starting CLI run...')
       const tiers = (customConc || '8,32,64,128,256,512,1024,2048,4096')
         .split(',').map(s=>Number(s.trim())).filter(n=>Number.isFinite(n) && n>0)
+
       const resp = await fetch('/bench/run-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
         concurrency: tiers,
         totals: tiers.map((c:number)=>c*4),
@@ -353,6 +413,11 @@ function BenchPanel() {
         </>)}
         <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
         <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running}>Preset: Max (64..4096)</button>
+        <label>Apex p95 max ms <input type="number" value={apexTtftP95Max} onChange={e=>setApexTtftP95Max(Number(e.target.value))} style={{ width:110 }} /></label>
+        <label>Start conc <input type="number" value={apexStart} onChange={e=>setApexStart(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label>Max conc <input type="number" value={apexMax} onChange={e=>setApexMax(Number(e.target.value))} style={{ width:110 }} /></label>
+        <button onClick={runBinarySearch} disabled={running} title="Find maximum sustainable concurrency under ttft p95 threshold">Binary search for apex</button>
+
 
         {mode!=='sse' && (
 
