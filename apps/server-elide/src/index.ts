@@ -5,7 +5,7 @@ import { request as httpsRequest } from "node:https";
 import { createGzip } from 'node:zlib'
 import { existsSync, createReadStream, createWriteStream, statSync, mkdirSync, writeFileSync } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { register, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client'
@@ -19,6 +19,50 @@ const RESULTS_DIR = resolve(REPO_ROOT, 'packages/bench/results')
 const GENERATE_INDEX = resolve(REPO_ROOT, 'packages/bench/scripts/generate-index.mjs')
 
 const CLI_RUNS = new Map<number, { logPath: string, status: 'running'|'done'|'error' }>()
+
+const CLI_SUBS = new Map<number, Set<any>>()
+const CLI_SAMPLERS = new Map<number, { timer: NodeJS.Timeout, last?: { cpuSeconds: number, rssBytes: number }, lastAt?: number }>()
+
+function sseWrite(res:any, type:string, data:any){
+  try{
+    res.write(`event: ${type}\n`)
+    res.write(`data: ${JSON.stringify(data)}\n\n`)
+  }catch{}
+}
+function broadcast(pid:number, type:string, data:any){
+  const subs = CLI_SUBS.get(pid)
+  if (!subs) return
+  for (const res of subs) sseWrite(res, type, data)
+}
+
+function sampleProcessOnce(pid: number): { cpuSeconds: number, rssBytes: number } | null {
+  try {
+    if (process.platform === 'win32') {
+      const cmd = `powershell -NoProfile -Command "$p=Get-Process -Id ${pid}; Write-Output (\"$($p.CPU),$($p.WorkingSet)\")"`
+      const out = execSync(cmd, { stdio: ['ignore','pipe','ignore'] }).toString().trim()
+      const [cpuStr, rssStr] = out.split(',')
+      const cpuSeconds = Number(cpuStr)
+      const rssBytes = Number(rssStr)
+      if (!Number.isFinite(cpuSeconds) || !Number.isFinite(rssBytes)) return null
+      return { cpuSeconds, rssBytes }
+    } else {
+      const out = execSync(`ps -p ${pid} -o cputime=,rss=`, { stdio: ['ignore','pipe','ignore'] }).toString().trim()
+      const parts = out.split(/\s+/).filter(Boolean)
+      if (parts.length < 2) return null
+      const cputime = parts[0]
+      const rssKb = Number(parts[1])
+      const segs = cputime.split(':').map(Number)
+      let cpuSeconds = 0
+      if (segs.length === 3) cpuSeconds = segs[0]*3600 + segs[1]*60 + segs[2]
+      else if (segs.length === 2) cpuSeconds = segs[0]*60 + segs[1]
+      else cpuSeconds = Number(cputime) || 0
+      const rssBytes = rssKb * 1024
+      return { cpuSeconds, rssBytes }
+    }
+  } catch {
+    return null
+  }
+}
 
 collectDefaultMetrics()
 const chatRequests = new Counter({ name: 'chat_requests_total', help: 'Chat requests', labelNames: ['runtime','model','status'] })
@@ -242,6 +286,19 @@ async function tryServeStatic(req: any, res: any): Promise<boolean> {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host}`)
     let p = url.pathname
+    // Serve results under /results/*
+    if (p === '/results' || p === '/results/') p = '/results/index.html'
+    if (p.startsWith('/results/')) {
+      const rel = p.slice('/results/'.length)
+      const fsPathR = resolve(RESULTS_DIR, rel)
+      if (existsSync(fsPathR) && statSync(fsPathR).isFile()) {
+        const ext = fsPathR.split('.').pop()?.toLowerCase()
+        const type = ext === 'html' ? 'text/html' : ext === 'js' ? 'text/javascript' : ext === 'css' ? 'text/css' : ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : 'text/plain'
+        res.writeHead(200, { 'content-type': type })
+        createReadStream(fsPathR).pipe(res)
+        return true
+      }
+    }
     if (p === '/' || p === '') p = '/index.html'
     const fsPath = resolve(UI_DIST_DIR, '.' + p)
     if (existsSync(fsPath) && statSync(fsPath).isFile()) {
@@ -382,20 +439,46 @@ const server = createServer(async (req, res) => {
         SYN_GZIP: gzip ? '1' : '',
       }
       const p = spawn(process.execPath, [cliPath], { cwd: REPO_ROOT, env })
-      p.stdout?.on('data', (d)=> out.write(d))
-      p.stderr?.on('data', (d)=> out.write(d))
+      const relLog = `packages/bench/results/${logPath.split(/[/\\]/).pop()}`
+      p.stdout?.on('data', (d)=> { out.write(d); broadcast(p.pid || 0, 'log', { text: String(d) }) })
+      p.stderr?.on('data', (d)=> { out.write(d); broadcast(p.pid || 0, 'log', { text: String(d), level:'err' }) })
       const pid = p.pid || Math.floor(Math.random()*1e9)
       CLI_RUNS.set(pid, { logPath, status: 'running' })
+      // start sampler
+      const first = sampleProcessOnce(pid)
+      if (first) {
+        const sampler = { last: first, lastAt: Date.now(), timer: setInterval(() => {
+          const cur = sampleProcessOnce(pid)
+          if (!cur) return
+          const now = Date.now()
+          const last = sampler.last!
+          const dt = Math.max(0.001, (now - (sampler.lastAt||now)) / 1000)
+          const dCpu = Math.max(0, cur.cpuSeconds - last.cpuSeconds)
+
+
+          const cpu = (dCpu / dt) * 100
+          const rssMb = cur.rssBytes / (1024*1024)
+          sampler.last = cur; sampler.lastAt = now
+          broadcast(pid, 'sample', { t: now, cpu, rssMb })
+        }, 500) }
+        CLI_SAMPLERS.set(pid, sampler)
+      }
+      broadcast(pid, 'start', { pid, log: relLog })
       p.on('close', async (code)=>{
         out.end(() => undefined)
         try {
           const g = spawn(process.execPath, [GENERATE_INDEX], { cwd: REPO_ROOT, stdio: 'ignore' })
           g.on('close', ()=>{})
         } catch {}
-        CLI_RUNS.set(pid, { logPath, status: code===0 ? 'done' : 'error' })
+        const status = code===0 ? 'done' : 'error'
+        CLI_RUNS.set(pid, { logPath, status })
+        const s = CLI_SAMPLERS.get(pid); if (s) { try{ clearInterval(s.timer) }catch{} CLI_SAMPLERS.delete(pid) }
+        broadcast(pid, 'done', { pid, status, log: relLog, index: '/results/index.html' })
+        const subs = CLI_SUBS.get(pid)
+        if (subs) { for (const r of subs) { try{ r.end() }catch{} } CLI_SUBS.delete(pid) }
       })
       res.writeHead(200, { 'content-type':'application/json' })
-      res.end(JSON.stringify({ ok:true, pid, log: `packages/bench/results/${logPath.split(/[/\\]/).pop()}` }))
+      res.end(JSON.stringify({ ok:true, pid, log: relLog }))
     } catch (e:any) {
       res.writeHead(500, { 'content-type':'application/json' })
       res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
@@ -420,6 +503,11 @@ const server = createServer(async (req, res) => {
         try { process.kill(pid) } catch {}
         const info = CLI_RUNS.get(pid)
         if (info) CLI_RUNS.set(pid, { ...info, status: 'error' })
+        // stop sampler
+        const s = CLI_SAMPLERS.get(pid); if (s) { try{ clearInterval(s.timer) }catch{} CLI_SAMPLERS.delete(pid) }
+        const relLog = info ? `packages/bench/results/${info.logPath.split(/[/\\]/).pop()}` : ''
+        broadcast(pid, 'done', { pid, status:'error', log: relLog, index:'/results/index.html' })
+        const subs = CLI_SUBS.get(pid); if (subs) { for (const r of subs) { try{ r.end() }catch{} } CLI_SUBS.delete(pid) }
       }
       res.writeHead(200, { 'content-type':'application/json' })
       res.end(JSON.stringify({ ok:true }))
@@ -427,6 +515,23 @@ const server = createServer(async (req, res) => {
       res.writeHead(500, { 'content-type':'application/json' })
       res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
     }
+
+  if (url.startsWith('/bench/run-cli/stream')) {
+    const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+    const pid = Number(q.get('pid')||'0')
+    res.writeHead(200, {
+      'content-type':'text/event-stream', 'cache-control':'no-cache', 'connection':'keep-alive', 'access-control-allow-origin':'*'
+    })
+    res.write(': connected\n\n')
+    let set = CLI_SUBS.get(pid)
+    if (!set) { set = new Set(); CLI_SUBS.set(pid, set) }
+    set.add(res)
+    const info = CLI_RUNS.get(pid)
+    if (info) sseWrite(res, 'status', { status: info.status, log: `packages/bench/results/${info.logPath.split(/[/\\]/).pop()}` })
+    req.on('close', ()=>{ try{ set?.delete(res) }catch{} })
+    return
+  }
+
     return
   }
 

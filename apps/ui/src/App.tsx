@@ -152,6 +152,10 @@ function BenchPanel() {
   const cancelRef = useRef(false)
   const [cliPid, setCliPid] = useState<number|null>(null)
 
+  const cliES = useRef<EventSource|null>(null)
+  const [cliSamples, setCliSamples] = useState<Array<{t:number,cpu:number,rssMb:number}>>([])
+  const [cliLinks, setCliLinks] = useState<{log?:string,index?:string}>({})
+
   const [mode, setMode] = useState<'sse'|'micro-plain'|'micro-chunked'>('sse')
   const [concurrency, setConcurrency] = useState(64)
   const [total, setTotal] = useState(256)
@@ -332,6 +336,7 @@ function BenchPanel() {
       while (hi - lo > 1){
         const mid = Math.floor((lo+hi)/2)
         const sm = await probe(mid)
+
         if (isOk(sm)) lo = mid; else hi = mid
       }
       const best = trials.reduce((a:any,b:any)=> (b.summary?.rps ?? 0) > (a.summary?.rps ?? 0) ? b : a, trials[0])
@@ -348,6 +353,7 @@ function BenchPanel() {
   function toggleModeInSuite(m:string){
     setModesSuite(prev=> prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m])
   }
+
 
   async function runCliSuite(){
     try{
@@ -366,15 +372,21 @@ function BenchPanel() {
       if (!j.ok){ setCliStatus('CLI run failed to start: '+(j.error||'unknown')); return }
       setCliPid(j.pid)
       setCliStatus('running (pid '+j.pid+')...')
+      setCliSamples([]); setCliLinks({})
+      if (cliES.current) { try{ cliES.current.close() }catch{}; cliES.current = null }
       const pid = j.pid
-      const poll = async()=>{
-        const r = await fetch('/bench/run-cli/status?pid='+pid)
-        const s = await r.json()
-        if (!s || !s.ok){ setCliStatus('status: not_found'); return }
-        setCliStatus(`status: ${s.status} (log: ${s.logPath || s.log || ''})`)
-        if (s.status==='running') setTimeout(poll, 2000)
-      }
-      poll()
+      const es = new EventSource('/bench/run-cli/stream?pid='+pid)
+      cliES.current = es
+      es.addEventListener('status', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); const rel = String(d.log||'').replace(/^packages[\\\/]bench[\\\/]results[\\\/]/,'/results/'); setCliStatus(`status: ${d.status} (log: ${rel})`) }catch{}
+      })
+      es.addEventListener('sample', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); setCliSamples(prev=>{ const arr = prev.concat({t:d.t,cpu:d.cpu,rssMb:d.rssMb}); return arr.length>240?arr.slice(-240):arr }) }catch{}
+      })
+      es.addEventListener('done', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); const log = String(d.log||'').replace(/^packages[\\\/]bench[\\/]results[\\\/]/,'/results/'); setCliLinks({ log, index: String(d.index||'/results/index.html') }); setCliStatus(`done (status: ${d.status})`) }catch{}
+        try{ es.close() }catch{}; cliES.current = null
+      })
     }catch(e:any){ setCliStatus('error: '+(e?.message||String(e))) }
   }
 
@@ -382,6 +394,8 @@ function BenchPanel() {
     if (!cliPid) return
     await fetch('/bench/run-cli/cancel?pid='+cliPid, { method:'POST' })
     setCliStatus('cancel requested for pid '+cliPid)
+    try{ cliES.current?.close() }catch{}
+    cliES.current = null
   }
 
   return (
@@ -410,6 +424,14 @@ function BenchPanel() {
         </div>
 
           <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
+        {cliSamples.length>0 && (()=>{ const last = cliSamples[cliSamples.length-1]; const cpu=Number(last.cpu||0).toFixed(1); const rss=Number(last.rssMb||0).toFixed(1); return (<div style={{ fontFamily:'monospace' }}>Live: CPU {cpu}% | RSS {rss} MB | samples {cliSamples.length}</div>) })()}
+        {(cliLinks.index || cliLinks.log) && (
+          <div style={{ display:'flex', gap:8 }}>
+            {cliLinks.index && <a href={cliLinks.index} target="_blank" rel="noreferrer">Open results index</a>}
+            {cliLinks.log && <a href={cliLinks.log} target="_blank" rel="noreferrer">Open log</a>}
+          </div>
+        )}
+
         </>)}
         <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
         <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running}>Preset: Max (64..4096)</button>
