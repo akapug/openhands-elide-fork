@@ -62,3 +62,52 @@ Tests include:
 A starter dashboard is provided at `docs/grafana/elide-openai-proxy.json`.
 Import in Grafana and point to your Prometheus datasource.
 Panels include requests by status, TTFT/Duration quantiles, tokens/s, bytes/s, and in-flight gauge.
+
+## LM Studio quick run and interpretation
+- Ensure LM Studio server is running (default http://localhost:1234/v1). UI Settings can be left default or set env LLM_BASE_URL, LLM_MODEL.
+- Run a small sweep and write HTML:
+  - `pnpm -C packages/bench build && node packages/bench/dist/cli.js sweep --base-url=http://localhost:8080 --concurrency=2 --total=8 --prompt="Explain Elide vs Node in one paragraph" --html`
+  - Output JSON is printed and `bench-report.html` is written at repo root.
+
+How to read it:
+- TTFT: dominated by upstream model. Proxy overhead should be small. Compare `chat_upstream_headers_ms` (~a few ms) to TTFT (often seconds on CPU models).
+- Duration: end-to-end stream time. Again dominated by model generation.
+- Tokens/s and Bytes/s: throughput of streaming; mostly upstream capability.
+- Requests by status: should be 200s during healthy runs; spikes in 5xx indicate upstream issues.
+
+To isolate HTTP-serving overhead:
+- Use the `chat_upstream_headers_ms` metric as a proxy for network + handshake overhead between server and LLM.
+- For a stricter isolation, we can add a synthetic SSE endpoint that emits tokens at fixed intervals to measure pure proxy overhead. Say "add synthetic SSE" and we’ll wire it.
+
+
+## Synthetic mode and in-repo baselines (Elide vs Express vs FastAPI)
+Synthetic SSE eliminates the model; we stream fixed-size chunks at fixed intervals to measure serving overhead.
+
+Config (env or request JSON):
+- SYN_FRAMES: number of frames (default 200)
+- SYN_DELAY_MS: delay between frames (default 5)
+- SYN_BYTES: approximate bytes per frame (default 64)
+- Request JSON can also set frames, delay_ms, bytes_per_frame
+
+Start servers in separate terminals:
+- Elide proxy (8080):
+  - `pnpm -C apps/ui exec vite --port 5175`
+  - `VITE_DEV_URL=http://localhost:5175 pnpm -C apps/server-elide dev`
+- Express baseline (8081):
+  - `pnpm -C apps/baseline-express dev`
+- FastAPI baseline (8082):
+  - Create venv, install deps: `python -m venv .venv && . .venv/Scripts/activate && pip install -r apps/baseline-fastapi/requirements.txt`
+  - Run: `pnpm -C apps/baseline-fastapi dev`
+
+Run sweeps and write distinct HTML reports:
+- Build once: `pnpm -C packages/bench build`
+- Elide (8080):
+  - `set LLM_MODEL=synthetic&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8080 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-elide.html`
+- Express (8081):
+  - `set SYN_FRAMES=200&& set SYN_DELAY_MS=5&& set SYN_BYTES=64&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8081 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-express.html`
+- FastAPI (8082):
+  - `set SYN_FRAMES=200&& set SYN_DELAY_MS=5&& set SYN_BYTES=64&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8082 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-fastapi.html`
+
+Notes:
+- On Git Bash/MSYS, avoid using a leading slash in a --path override; default path is /api/chat/completions so no override needed here.
+- Compare TTFT, RPS, and CPU usage across the three reports; the synthetic mode highlights serving-layer differences only.

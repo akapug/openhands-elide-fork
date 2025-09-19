@@ -21,9 +21,10 @@ async function smoke(baseURL: string) {
   return { ok, ttms }
 }
 
-async function run(baseURL: string, prompt = 'Hello') {
+const DEFAULT_PATH = process.env.BENCH_PATH || '/api/chat/completions'
+async function run(baseURL: string, prompt = 'Hello', path = DEFAULT_PATH) {
   const sendAt = performance.now()
-  const res = await fetch(`${baseURL}/api/chat/completions`, {
+  const res = await fetch(`${baseURL}${path}`, {
     method: 'POST', headers: { 'content-type':'application/json' },
     body: JSON.stringify({ model: process.env.LLM_MODEL || 'openai/gpt-oss-120b', messages: [{ role:'user', content: prompt }], stream: true })
   })
@@ -64,7 +65,7 @@ function percentile(vals: number[], p: number) {
   return a[idx]
 }
 
-async function sweep(baseURL: string, prompt: string, concurrency = 4, total = 16) {
+async function sweep(baseURL: string, prompt: string, concurrency = 4, total = 16, path = DEFAULT_PATH) {
   const started = performance.now()
   const results: Awaited<ReturnType<typeof run>>[] = new Array(total)
   let next = 0
@@ -72,7 +73,7 @@ async function sweep(baseURL: string, prompt: string, concurrency = 4, total = 1
     while (true) {
       const idx = next++
       if (idx >= total) break
-      results[idx] = await run(baseURL, prompt)
+      results[idx] = await run(baseURL, prompt, path)
     }
   }
   await Promise.all(Array.from({ length: concurrency }, () => worker()))
@@ -107,18 +108,21 @@ async function main() {
     const conc = Number(args.concurrency || 4)
     const total = Number(args.total || 16)
     const prompt = String(args.prompt || 'Hello')
-    const stats = await sweep(baseURL, prompt, conc, total)
-    const out = { mode, baseURL, ...stats }
+    const path = String(args.path || DEFAULT_PATH)
+    const stats = await sweep(baseURL, prompt, conc, total, path)
+    const out = { mode, baseURL, path, ...stats }
     console.log(JSON.stringify(out, null, 2))
     if (args.html) {
       const fs = await import('node:fs')
-      fs.writeFileSync('bench-report.html', htmlReport(out))
-      console.log('wrote bench-report.html')
+      const outfile = String(args.out || 'bench-report.html')
+      fs.writeFileSync(outfile, htmlReport(out))
+      console.log(`wrote ${outfile}`)
     }
     return
   }
-  const r = await run(baseURL, String(args.prompt || 'Hello'))
-  console.log(JSON.stringify({ mode, baseURL, ...r }, null, 2))
+  const path = String(args.path || DEFAULT_PATH)
+  const r = await run(baseURL, String(args.prompt || 'Hello'), path)
+  console.log(JSON.stringify({ mode, baseURL, path, ...r }, null, 2))
 }
 
 main().catch(err => { console.error(err); process.exit(1) })

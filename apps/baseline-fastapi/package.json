@@ -1,0 +1,10 @@
+{
+  "name": "@openhands-elide/baseline-fastapi",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8082",
+    "start": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8082"
+  }
+}
+
