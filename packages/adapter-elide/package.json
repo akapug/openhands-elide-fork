@@ -1,0 +1,18 @@
+{
+  "name": "@openhands-elide/adapter-elide",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "pkl"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node -e \"console.log('adapter-elide tests placeholder')\""
+  },
+  "dependencies": {
+    "@openhands-elide/runtime-core": "workspace:*"
+  },
+  "license": "MIT"
+}
+

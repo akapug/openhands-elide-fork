@@ -1,0 +1,19 @@
+version: '3.9'
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    command: ["--model", "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"]
+    ports: ["1234:8000"]
+    environment:
+      - VLLM_API_KEY=dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  tgi:
+    image: ghcr.io/huggingface/text-generation-inference:latest
+    environment:
+      - HUGGINGFACE_HUB_CACHE=/data
+    ports: ["8086:80"]
+

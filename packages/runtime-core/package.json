@@ -1,0 +1,15 @@
+{
+  "name": "@openhands-elide/runtime-core",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node -e \"console.log('runtime-core tests placeholder')\""
+  },
+  "license": "MIT"
+}
+

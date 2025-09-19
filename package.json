@@ -1,0 +1,29 @@
+{
+  "name": "openhands-elide-fork",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "cross-env VITE_DEV_URL=http://localhost:5173 concurrently -k -n server,ui -c blue,magenta \"pnpm -C apps/server-elide dev\" \"pnpm -C apps/ui dev\"",
+    "build": "pnpm -r --workspace-concurrency=1 --filter ./packages/** --filter ./apps/** build",
+    "test": "pnpm -r test || true",
+    "e2e": "echo \"e2e package not yet implemented\"",
+    "bench": "echo \"bench package not yet implemented\"",
+    "bench:smoke": "echo \"bench smoke not yet implemented\""
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

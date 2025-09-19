@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+.pnpm-store/
+.pnp.*
+
+# Env
+.env
+.env.*
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# Build artifacts
+*.tsbuildinfo
+

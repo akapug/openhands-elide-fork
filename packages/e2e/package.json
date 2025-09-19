@@ -1,0 +1,14 @@
+{
+  "name": "@openhands-elide/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:ci": "playwright test --reporter=line"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}
+

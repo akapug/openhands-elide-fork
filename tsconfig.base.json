@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2021", "DOM"],
+    "strict": true,
+    "declaration": true,
+    "sourceMap": true,
+    "composite": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@openhands-elide/runtime-core": [
+        "packages/runtime-core/src",
+        "packages/runtime-core/dist"
+      ]
+    }
+  }
+}
+

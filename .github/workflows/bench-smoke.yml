@@ -1,0 +1,36 @@
+name: Bench Smoke
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10
+      - run: pnpm i -w
+      - run: |
+          pnpm -C apps/server-elide build
+          pnpm -C apps/ui build
+      - name: Start server
+        run: node apps/server-elide/dist/index.js &
+        env:
+          PORT: 8080
+          VITE_DEV_URL: http://127.0.0.1:8080
+      - name: Bench smoke
+        run: |
+          pnpm -C packages/bench build
+          node packages/bench/dist/cli.js smoke --base-url=http://127.0.0.1:8080 | tee bench.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-smoke
+          path: bench.json
+
