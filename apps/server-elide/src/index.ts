@@ -53,6 +53,52 @@ async function handleChatProxy(req: any, res: any) {
     const apiKey: string | undefined = body.apiKey || process.env.LLM_API_KEY;
     labels = { runtime: String(body.runtime || 'elide'), model: String(body.model || process.env.LLM_MODEL || 'unknown') }
     chatInFlight.labels(labels.runtime, labels.model).inc()
+    // Synthetic SSE mode to isolate serving overhead
+    if (String(labels.model).toLowerCase() === 'synthetic' || body.synthetic) {
+      try {
+        const frames = Number(body.frames ?? process.env.SYN_FRAMES ?? 200);
+        const delayMs = Number(body.delay_ms ?? process.env.SYN_DELAY_MS ?? 5);
+        const bytesPerFrame = Number(body.bytes_per_frame ?? process.env.SYN_BYTES ?? 64);
+        const word = 'x';
+        const wordsPerFrame = Math.max(1, Math.floor(bytesPerFrame / (word.length + 1))); // approximate
+        // Minimal upstream header timing (no upstream)
+        chatHdrsHist.labels(labels.runtime, labels.model).observe(0);
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'transfer-encoding': 'chunked',
+          'cache-control': 'no-cache',
+        });
+        const encoder = new TextEncoder();
+        for (let i = 0; i < frames; i++) {
+          if (i === 0 && !ttftObserved) {
+            ttftObserved = true;
+            chatTTFTHist.labels(labels.runtime, labels.model).observe(performance.now() - started);
+          }
+          const text = (word + ' ').repeat(wordsPerFrame);
+          const frame = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+          const buf = encoder.encode(frame);
+          chatBytes.labels(labels.runtime, labels.model).inc(buf.length);
+          const t = text.trim().length ? text.trim().split(/\s+/).length : 0;
+          if (t) chatTokens.labels(labels.runtime, labels.model).inc(t);
+          res.write(buf);
+          if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+        statusLabel = '200';
+      } catch (e: any) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end(`synthetic error: ${e?.message || e}`);
+        statusLabel = '500';
+        try { chatErrors.labels(labels.runtime, labels.model, 'synthetic_exception').inc() } catch {}
+      } finally {
+        try { chatInFlight.labels(labels.runtime, labels.model).dec() } catch {}
+        chatDurHist.labels(labels.runtime, labels.model).observe(performance.now() - started);
+        chatRequests.labels(labels.runtime, labels.model, statusLabel).inc();
+      }
+      return;
+    }
+
 
     const hdrStart = performance.now()
     const fetchRes = await fetch(`${baseURL}/chat/completions`, {
@@ -75,13 +121,13 @@ async function handleChatProxy(req: any, res: any) {
       chatErrors.labels(labels.runtime, labels.model, `upstream_${statusLabel}`).inc()
     }
     if (!fetchRes.body) {
-      res.writeHead(500, { "content-type": "text/plain" });
+      if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain" });
       res.end("upstream no body\n");
       statusLabel = String(fetchRes.status || 500)
       chatErrors.labels(labels.runtime, labels.model, 'no_body').inc()
       return;
     }
-    res.writeHead(fetchRes.status, {
+    if (!res.headersSent) res.writeHead(fetchRes.status, {
       "content-type": fetchRes.headers.get("content-type") || "text/plain",
       "transfer-encoding": "chunked",
       "cache-control": "no-cache",
@@ -120,7 +166,7 @@ async function handleChatProxy(req: any, res: any) {
     res.end();
     statusLabel = String(fetchRes.status)
   } catch (e: any) {
-    res.writeHead(500, { "content-type": "text/plain" });
+    if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain" });
     res.end(`error: ${e.message}`);
     statusLabel = '500'
     try { chatErrors.labels(labels.runtime, labels.model, 'exception').inc() } catch {}

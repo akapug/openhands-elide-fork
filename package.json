@@ -15,8 +15,8 @@
     "build": "pnpm -r --workspace-concurrency=1 --filter ./packages/** --filter ./apps/** build",
     "test": "pnpm -r test || true",
     "e2e": "echo \"e2e package not yet implemented\"",
-    "bench": "echo \"bench package not yet implemented\"",
-    "bench:smoke": "echo \"bench smoke not yet implemented\""
+    "bench": "pnpm -C packages/bench build && node packages/bench/dist/cli.js",
+    "bench:trio": "pnpm -C packages/bench build && node packages/bench/dist/trio.js"
   },
   "license": "MIT",
   "devDependencies": {
