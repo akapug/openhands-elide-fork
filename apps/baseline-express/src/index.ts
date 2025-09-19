@@ -11,6 +11,14 @@ app.get('/healthz', (_req: any, res: any) => {
   res.status(200).type('text/plain').send('ok\n')
 })
 
+// Local tool endpoint to simulate HTTP fanout overhead
+app.post('/tool', async (req: any, res: any) => {
+  const cpuSpinMs = Number(req.body?.cpu_spin_ms ?? process.env.SYN_CPU_SPIN_MS ?? 0)
+  const spin = (ms: number) => { if (ms <= 0) return; const end = Date.now() + ms; while (Date.now() < end) {} }
+  if (cpuSpinMs > 0) spin(cpuSpinMs)
+  res.json({ ok: true })
+})
+
 // Synthetic SSE endpoint mirroring Elide server's synthetic mode
 app.post('/api/chat/completions', async (req: any, res: any) => {
   const frames = Number(req.body?.frames ?? process.env.SYN_FRAMES ?? 200)
@@ -34,9 +42,19 @@ app.post('/api/chat/completions', async (req: any, res: any) => {
   const spin = (ms: number) => { if (ms <= 0) return; const end = Date.now() + ms; while (Date.now() < end) {} }
 
   // Pre-stream fanout simulation
+  const fanoutHttp = String(process.env.SYN_FANOUT_HTTP || '').toLowerCase() === '1' || String(process.env.SYN_FANOUT_HTTP || '').toLowerCase() === 'true'
   for (let i = 0; i < fanout; i++) {
     if (fanoutDelay > 0) await sleep(fanoutDelay)
-    if (cpuSpinMs > 0) spin(cpuSpinMs)
+    if (fanoutHttp) {
+      try {
+        await fetch(`http://127.0.0.1:${PORT}/tool`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cpu_spin_ms: cpuSpinMs })
+        })
+      } catch {}
+    } else {
+      if (cpuSpinMs > 0) spin(cpuSpinMs)
+    }
   }
 
   const writer: any = useGzip ? createGzip() : res

@@ -166,9 +166,9 @@ async function main() {
       ])
 
       const runForTier = async (tier: {c:number,t:number}) => {
-        const envElide = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), LLM_MODEL: 'synthetic', SAMPLING_PID: String(elide.pid || '') }
-        const envExpress = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(express.pid || '') }
-        const envFastapi = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(fastapi.pid || '') }
+        const envElide = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), LLM_MODEL: 'synthetic', SAMPLING_PID: String(elide.pid || ''), SYN_FANOUT_MODE: 'inproc' }
+        const envExpress = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(express.pid || ''), SYN_FANOUT_HTTP: '1' }
+        const envFastapi = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(fastapi.pid || ''), SYN_FANOUT_HTTP: '1' }
         const outE = `bench-elide.${tier.c}x${tier.t}.html`
         const outX = `bench-express.${tier.c}x${tier.t}.html`
         const outF = `bench-fastapi.${tier.c}x${tier.t}.html`

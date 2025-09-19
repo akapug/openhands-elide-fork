@@ -4,7 +4,8 @@ import time
 from starlette.middleware.gzip import GZipMiddleware
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse, JSONResponse
+import httpx
 
 app = FastAPI(title="baseline-fastapi", version="0.1.0")
 if str(os.getenv("SYN_GZIP", "")).lower() in ("1", "true"):
@@ -14,6 +15,22 @@ if str(os.getenv("SYN_GZIP", "")).lower() in ("1", "true"):
 @app.get("/healthz")
 async def healthz():
     return PlainTextResponse("ok\n")
+
+@app.post("/tool")
+async def tool(req: Request):
+    body = await req.json()
+    cpu_spin_ms = int(body.get("cpu_spin_ms", os.getenv("SYN_CPU_SPIN_MS", 0)))
+
+    def spin(ms: int):
+        if ms <= 0:
+            return
+        end = time.perf_counter() + (ms / 1000.0)
+        while time.perf_counter() < end:
+            pass
+
+    if cpu_spin_ms > 0:
+        spin(cpu_spin_ms)
+    return JSONResponse({"ok": True})
 
 @app.post("/api/chat/completions")
 async def chat(req: Request):
@@ -38,11 +55,19 @@ async def chat(req: Request):
     async def gen():
         try:
             # Pre-stream fanout (simulate upstream calls)
+            fanout_http = str(os.getenv("SYN_FANOUT_HTTP", "")).lower() in ("1", "true")
             for _ in range(fanout):
                 if fanout_delay_ms > 0:
                     await asyncio.sleep(fanout_delay_ms / 1000)
-                if cpu_spin_ms > 0:
-                    spin(cpu_spin_ms)
+                if fanout_http:
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            await client.post("http://127.0.0.1:8082/tool", json={"cpu_spin_ms": cpu_spin_ms}, timeout=10.0)
+                    except Exception:
+                        pass
+                else:
+                    if cpu_spin_ms > 0:
+                        spin(cpu_spin_ms)
 
             for _ in range(frames):
                 if cpu_spin_ms > 0:

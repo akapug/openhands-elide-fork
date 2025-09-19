@@ -86,9 +86,20 @@ async function handleChatProxy(req: any, res: any) {
         const spin = (ms: number) => { if (ms <= 0) return; const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
 
         // Pre-stream fanout simulation (tool calls / RAG)
+        const fanoutMode = String(body.fanout_mode ?? process.env.SYN_FANOUT_MODE ?? 'inproc').toLowerCase()
         for (let i = 0; i < fanout; i++) {
-          if (fanoutDelay > 0) await sleep(fanoutDelay);
-          if (cpuSpinMs > 0) spin(cpuSpinMs);
+          if (fanoutDelay > 0) await sleep(fanoutDelay)
+          if (fanoutMode === 'http') {
+            // Loopback HTTP call exercises full HTTP/JSON overhead
+            try {
+              await fetch(`http://127.0.0.1:${PORT}/tool`, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ cpu_spin_ms: cpuSpinMs })
+              })
+            } catch {}
+          } else {
+            if (cpuSpinMs > 0) spin(cpuSpinMs)
+          }
         }
 
         for (let i = 0; i < frames; i++) {
@@ -217,6 +228,23 @@ async function handleModels(req: any, res: any) {
 
 const server = createServer(async (req, res) => {
   const url = req.url || "/";
+  if (url === "/tool") {
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk)
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}
+      const cpuSpinMs = Number(body?.cpu_spin_ms ?? process.env.SYN_CPU_SPIN_MS ?? 0)
+      const spin = (ms: number) => { if (ms <= 0) return; const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } }
+      if (cpuSpinMs > 0) spin(cpuSpinMs)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
+    } catch (e: any) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: e?.message || String(e) }))
+    }
+    return
+  }
+
   if (url === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" });
     res.end("ok\n");
