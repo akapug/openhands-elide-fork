@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { performance } from 'node:perf_hooks'
+import { execSync } from 'node:child_process'
 
 function parseArgs(argv: string[]) {
   const args: Record<string,string|number|boolean> = {}
@@ -65,10 +66,64 @@ function percentile(vals: number[], p: number) {
   return a[idx]
 }
 
+function mean(vals: number[]) { return vals.length ? (vals.reduce((s,v)=>s+v,0) / vals.length) : NaN }
+
+function sampleProcessOnce(pid: number): { cpuSeconds: number, rssBytes: number } | null {
+  try {
+    if (process.platform === 'win32') {
+      const cmd = `powershell -NoProfile -Command "$p=Get-Process -Id ${pid}; Write-Output (\"$($p.CPU),$($p.WorkingSet)\")"`
+      const out = execSync(cmd, { stdio: ['ignore','pipe','ignore'] }).toString().trim()
+      const [cpuStr, rssStr] = out.split(',')
+      const cpuSeconds = Number(cpuStr)
+      const rssBytes = Number(rssStr)
+      if (!Number.isFinite(cpuSeconds) || !Number.isFinite(rssBytes)) return null
+      return { cpuSeconds, rssBytes }
+    } else {
+      const out = execSync(`ps -p ${pid} -o cputime=,rss=`, { stdio: ['ignore','pipe','ignore'] }).toString().trim()
+      const parts = out.split(/\s+/).filter(Boolean)
+      if (parts.length < 2) return null
+      const cputime = parts[0] // like HH:MM:SS or MM:SS
+      const rssKb = Number(parts[1])
+      const segs = cputime.split(':').map(Number)
+      let cpuSeconds = 0
+      if (segs.length === 3) cpuSeconds = segs[0]*3600 + segs[1]*60 + segs[2]
+      else if (segs.length === 2) cpuSeconds = segs[0]*60 + segs[1]
+      else cpuSeconds = Number(cputime) || 0
+      const rssBytes = rssKb * 1024
+      return { cpuSeconds, rssBytes }
+    }
+  } catch {
+    return null
+  }
+}
+
 async function sweep(baseURL: string, prompt: string, concurrency = 4, total = 16, path = DEFAULT_PATH) {
   const started = performance.now()
   const results: Awaited<ReturnType<typeof run>>[] = new Array(total)
   let next = 0
+
+  // Optional CPU/RSS sampling for a single target PID across the whole sweep
+  const sampPid = process.env.SAMPLING_PID ? Number(process.env.SAMPLING_PID) : 0
+  const cpuPercents: number[] = []
+  const rssMBs: number[] = []
+  let lastSample = sampPid ? sampleProcessOnce(sampPid) : null
+  let lastAt = performance.now()
+  let timer: any
+  if (sampPid && lastSample) {
+    timer = setInterval(() => {
+      const now = performance.now()
+      const cur = sampleProcessOnce(sampPid)
+      if (cur && lastSample) {
+        const dt = (now - lastAt) / 1000
+        const dCpu = cur.cpuSeconds - lastSample.cpuSeconds
+        if (dt > 0 && dCpu >= 0) cpuPercents.push((dCpu / dt) * 100)
+        rssMBs.push(cur.rssBytes / (1024*1024))
+        lastSample = cur
+        lastAt = now
+      }
+    }, 250)
+  }
+
   async function worker() {
     while (true) {
       const idx = next++
@@ -77,13 +132,28 @@ async function sweep(baseURL: string, prompt: string, concurrency = 4, total = 1
     }
   }
   await Promise.all(Array.from({ length: concurrency }, () => worker()))
+  if (timer) clearInterval(timer)
+
   const wall = performance.now() - started
   const ttfts = results.map(r=>r.ttft)
   const durs = results.map(r=>r.duration)
   const tokens = results.reduce((s,r)=>s+r.tokens,0)
   const rps = (total / (wall/1000))
   const tps = tokens / (wall/1000)
-  return { total, concurrency, wall, rps, tps, ttft_p50: percentile(ttfts,50), ttft_p95: percentile(ttfts,95), dur_p50: percentile(durs,50), dur_p95: percentile(durs,95) }
+  const stats: any = {
+    total, concurrency, wall, rps, tps,
+    ttft_p50: percentile(ttfts,50), ttft_p95: percentile(ttfts,95), ttft_p99: percentile(ttfts,99),
+    dur_p50: percentile(durs,50), dur_p95: percentile(durs,95), dur_p99: percentile(durs,99),
+  }
+  if (cpuPercents.length) {
+    stats.cpu_avg = mean(cpuPercents)
+    stats.cpu_p95 = percentile(cpuPercents, 95)
+  }
+  if (rssMBs.length) {
+    stats.rss_mb_avg = mean(rssMBs)
+    stats.rss_mb_p95 = percentile(rssMBs, 95)
+  }
+  return stats
 }
 
 function htmlReport(stats: any) {
