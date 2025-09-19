@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 39,
+  "title": "Elide OpenAI Proxy",
+  "tags": ["elide","openai","proxy"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Requests by status (req/s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(rate(chat_requests_total[5m])) by (status)", "legendFormat": "status {{status}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TTFT p50/p95 (ms)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(chat_ttft_ms_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chat_ttft_ms_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Duration p50/p95 (ms)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(chat_duration_ms_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chat_duration_ms_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens/s and Bytes/s",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "rate(chat_tokens_total[5m])", "legendFormat": "tokens/s" },
+        { "expr": "rate(chat_bytes_out_total[5m])", "legendFormat": "bytes/s" }
+      ]
+    },
+    {
+      "type": "gauge",
+      "title": "In-flight (current)",
+      "gridPos": { "x": 0, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "sum(chat_in_flight)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream headers time p50/p95 (ms)",
+      "gridPos": { "x": 6, "y": 16, "w": 18, "h": 6 },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(chat_upstream_headers_ms_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chat_upstream_headers_ms_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ]
+    }
+  ],
+  "templating": { "list": [] }
+}
+

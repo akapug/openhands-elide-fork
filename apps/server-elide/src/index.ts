@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { register, collectDefaultMetrics, Counter, Histogram } from 'prom-client'
+import { register, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client'
 
 const PORT = Number(process.env.PORT || 8080);
 const VITE_DEV_URL = process.env.VITE_DEV_URL || "http://localhost:5173";
@@ -13,6 +13,11 @@ const chatTTFTHist = new Histogram({ name: 'chat_ttft_ms', help: 'TTFT for chat 
 const chatDurHist = new Histogram({ name: 'chat_duration_ms', help: 'Total duration for chat completions (ms)', buckets: [50,100,200,400,800,1500,3000,6000,12000], labelNames: ['runtime','model'] })
 const chatTokens = new Counter({ name: 'chat_tokens_total', help: 'Total tokens streamed to clients', labelNames: ['runtime','model'] })
 const chatBytes = new Counter({ name: 'chat_bytes_out_total', help: 'Total bytes streamed to clients', labelNames: ['runtime','model'] })
+const chatInFlight = new Gauge({ name: 'chat_in_flight', help: 'In-flight chat requests', labelNames: ['runtime','model'] })
+const chatHdrsHist = new Histogram({ name: 'chat_upstream_headers_ms', help: 'Time to receive upstream headers (ms)', buckets: [10,20,50,100,200,400,800,1500,3000,6000], labelNames: ['runtime','model'] })
+const chatErrors = new Counter({ name: 'chat_errors_total', help: 'Errors during chat proxying', labelNames: ['runtime','model','reason'] })
+const buildInfo = new Gauge({ name: 'build_info', help: 'Build information', labelNames: ['version','node'] })
+try { const pkg = await import('../package.json', { assert: { type: 'json' } }) as any; buildInfo.labels(String(pkg.default?.version||'0.0.0'), process.versions.node).set(1) } catch { buildInfo.labels('unknown', process.versions.node).set(1) }
 
 function proxyTo(target: string, req: any, res: any) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -47,7 +52,9 @@ async function handleChatProxy(req: any, res: any) {
     const baseURL: string = body.baseURL || process.env.LLM_BASE_URL || "http://localhost:1234/v1";
     const apiKey: string | undefined = body.apiKey || process.env.LLM_API_KEY;
     labels = { runtime: String(body.runtime || 'elide'), model: String(body.model || process.env.LLM_MODEL || 'unknown') }
+    chatInFlight.labels(labels.runtime, labels.model).inc()
 
+    const hdrStart = performance.now()
     const fetchRes = await fetch(`${baseURL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -62,10 +69,16 @@ async function handleChatProxy(req: any, res: any) {
         stream: true,
       }),
     });
+    chatHdrsHist.labels(labels.runtime, labels.model).observe(performance.now() - hdrStart)
+    if (!fetchRes.ok) {
+      statusLabel = String(fetchRes.status || 500)
+      chatErrors.labels(labels.runtime, labels.model, `upstream_${statusLabel}`).inc()
+    }
     if (!fetchRes.body) {
       res.writeHead(500, { "content-type": "text/plain" });
       res.end("upstream no body\n");
       statusLabel = String(fetchRes.status || 500)
+      chatErrors.labels(labels.runtime, labels.model, 'no_body').inc()
       return;
     }
     res.writeHead(fetchRes.status, {
@@ -110,7 +123,9 @@ async function handleChatProxy(req: any, res: any) {
     res.writeHead(500, { "content-type": "text/plain" });
     res.end(`error: ${e.message}`);
     statusLabel = '500'
+    try { chatErrors.labels(labels.runtime, labels.model, 'exception').inc() } catch {}
   } finally {
+    try { chatInFlight.labels(labels.runtime, labels.model).dec() } catch {}
     chatDurHist.labels(labels.runtime, labels.model).observe(performance.now() - started)
     chatRequests.labels(labels.runtime, labels.model, statusLabel).inc()
   }
