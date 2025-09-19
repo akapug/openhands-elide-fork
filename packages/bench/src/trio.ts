@@ -5,7 +5,7 @@ function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<s
     const conc = extraEnv.TRIO_CONCURRENCY || process.env.TRIO_CONCURRENCY || '8'
     const total = extraEnv.TRIO_TOTAL || process.env.TRIO_TOTAL || '64'
     const args = [
-      'packages/bench/dist/cli.js', 'sweep',
+      repoRoot() + '/packages/bench/dist/cli.js', 'sweep',
       `--base-url=${baseURL}`,
       `--concurrency=${conc}`,
       `--total=${total}`,
@@ -21,7 +21,7 @@ function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<s
   })
 }
 
-async function waitHealthy(name: string, url: string, timeoutMs = 20000) {
+async function waitHealthy(name: string, url: string, timeoutMs = Number(process.env.TRIO_HEALTH_TIMEOUT_MS || 60000)) {
   const t0 = Date.now()
   while (Date.now() - t0 < timeoutMs) {
     try {
@@ -72,6 +72,14 @@ function killTree(pid?: number): Promise<void> {
   })
 }
 
+function repoRoot(): string {
+  // Handle being invoked from repo root or from within the monorepo package
+  const cwd = process.cwd().replace(/\\/g, '/')
+  if (cwd.endsWith('/elide-hands/openhands-elide-fork')) return cwd
+  if (cwd.includes('/elide-hands/openhands-elide-fork')) return cwd.slice(0, cwd.indexOf('/elide-hands/openhands-elide-fork') + '/elide-hands/openhands-elide-fork'.length)
+  return cwd + '/elide-hands/openhands-elide-fork'
+}
+
 function parseTiers() {
   const concList = (process.env.TRIO_CONCURRENCY_LIST || '').split(',').map(s=>s.trim()).filter(Boolean).map(Number)
   const totalList = (process.env.TRIO_TOTAL_LIST || '').split(',').map(s=>s.trim()).filter(Boolean).map(Number)
@@ -91,31 +99,55 @@ async function main() {
     // Start servers with SYN_* envs propagated
     const baseEnv = { ...process.env }
 
-    // Build Node servers to avoid dev/watch overhead
-    await runCmd('elide-build', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C','apps/server-elide','build'], { env: baseEnv })
-    await runCmd('express-build', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C','apps/baseline-express','build'], { env: baseEnv })
+    const useWslNode = process.platform === 'win32' && (String(process.env.TRIO_WSL_NODE||'').toLowerCase()==='1' || String(process.env.TRIO_WSL_NODE||'').toLowerCase()==='true')
 
-    const elide = startServer(
-      'elide',
-      process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-      ['-C','apps/server-elide','start'],
-      { env: baseEnv }
-    )
-    const express = startServer(
-      'express',
-      process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-      ['-C','apps/baseline-express','start'],
-      { env: baseEnv }
-    )
+    if (useWslNode) {
+      // Build inside WSL
+      const rootWsl = winPathToWsl(repoRoot())
+      await runCmd('wsl-elide-build', 'wsl.exe', ['--cd', `${rootWsl}/apps/server-elide`, 'bash', '-lc', 'pnpm -C . build'])
+      await runCmd('wsl-express-build', 'wsl.exe', ['--cd', `${rootWsl}/apps/baseline-express`, 'bash', '-lc', 'pnpm -C . build'])
+    } else {
+      // Build Node servers to avoid dev/watch overhead on host
+      await runCmd('elide-build', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C','apps/server-elide','build'], { env: baseEnv })
+      await runCmd('express-build', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-C','apps/baseline-express','build'], { env: baseEnv })
+    }
+
+    const elide = useWslNode
+      ? startServer(
+          'elide',
+          'wsl.exe',
+          ['--cd', `${winPathToWsl(repoRoot() + '/apps/server-elide')}`, 'bash', '-lc', 'node dist/index.js'],
+          { env: baseEnv }
+        )
+      : startServer(
+          'elide',
+          process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+          ['-C','apps/server-elide','start'],
+          { env: baseEnv }
+        )
+
+    const express = useWslNode
+      ? startServer(
+          'express',
+          'wsl.exe',
+          ['--cd', `${winPathToWsl(repoRoot() + '/apps/baseline-express')}`, 'bash', '-lc', 'node dist/index.js'],
+          { env: baseEnv }
+        )
+      : startServer(
+          'express',
+          process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+          ['-C','apps/baseline-express','start'],
+          { env: baseEnv }
+        )
     const fastapi = (process.platform === 'win32' && (String(process.env.TRIO_WSL_FASTAPI||'').toLowerCase()==='1' || String(process.env.TRIO_WSL_FASTAPI||'').toLowerCase()==='true'))
       ? (()=>{
           const synKeys = ['SYN_FRAMES','SYN_DELAY_MS','SYN_BYTES','SYN_CPU_SPIN_MS','SYN_FANOUT','SYN_FANOUT_DELAY_MS','SYN_GZIP'] as const
           const kv = synKeys.map(k=> process.env[k] ? `${k}=${process.env[k]}` : '').filter(Boolean).join(' ')
-          const cmd = `${kv} python3 -m venv .venv && source .venv/bin/activate && pip -q install -U pip && pip -q install -r requirements.txt && ${kv} uvicorn app.main:app --host 127.0.0.1 --port 8082`
+          const cmd = `${kv} python3 -m venv .venv && .venv/bin/python -m pip -q install -U pip && .venv/bin/pip -q install -r requirements.txt && ${kv} .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8082`
           return startServer(
             'fastapi',
             'wsl.exe',
-            ['--cd', winPathToWsl(process.cwd() + '/apps/baseline-fastapi'), 'bash', '-lc', cmd],
+            ['--cd', winPathToWsl(repoRoot() + '/apps/baseline-fastapi'), 'bash', '-lc', cmd],
             { env: baseEnv }
           )
         })()
@@ -123,7 +155,7 @@ async function main() {
           'fastapi',
           process.platform === 'win32' ? (process.env.PYTHON || 'python') : (process.env.PYTHON || 'python'),
           ['-m','uvicorn','app.main:app','--host', process.platform === 'win32' ? '127.0.0.1' : '0.0.0.0','--port','8082'],
-          { env: baseEnv, cwd: process.cwd() + '/apps/baseline-fastapi' }
+          { env: baseEnv, cwd: repoRoot() + '/apps/baseline-fastapi' }
         )
 
     try {
