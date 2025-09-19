@@ -148,7 +148,7 @@ function BenchPanel() {
   const [target, setTarget] = useState('http://localhost:8080')
   const [modesSuite, setModesSuite] = useState<string[]>(['sse'])
   const [concList, setConcList] = useState<number[]>([8,32,64,128])
-  const [customConc, setCustomConc] = useState('')
+  const [customConc, setCustomConc] = useState('8,32,64,128,256,512,1024,2048,4096')
   const cancelRef = useRef(false)
   const [cliPid, setCliPid] = useState<number|null>(null)
 
@@ -258,7 +258,10 @@ function BenchPanel() {
 
   async function runFullSuite() {
     setRunning(true); setSummary(null)
-    const tiers = [8, 32, 64, 128]
+    const tiers = (customConc || '8,32,64,128,256,512,1024,2048,4096')
+      .split(',')
+      .map(s=>Number(s.trim()))
+      .filter(n=>Number.isFinite(n) && n>0)
     const runs:any[] = []
     for (const c of tiers) {
 
@@ -328,7 +331,11 @@ function BenchPanel() {
           <label>Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
           <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
         </>)}
+        <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
+        <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running}>Preset: Max (64..4096)</button>
+
         {mode!=='sse' && (
+
           <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
         )}
         <label><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
