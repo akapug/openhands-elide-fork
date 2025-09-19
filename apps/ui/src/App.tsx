@@ -146,7 +146,7 @@ export default function App() {
 
 function BenchPanel() {
   const [target, setTarget] = useState('http://localhost:8080')
-  const [modesSuite, setModesSuite] = useState<string[]>(['sse'])
+  const [modesSuite, setModesSuite] = useState<string[]>(['sse','micro-plain','micro-chunked'])
   const [concList, setConcList] = useState<number[]>([8,32,64,128])
   const [customConc, setCustomConc] = useState('8,32,64,128,256,512,1024,2048,4096')
   const cancelRef = useRef(false)
@@ -263,53 +263,66 @@ function BenchPanel() {
       .map(s=>Number(s.trim()))
       .filter(n=>Number.isFinite(n) && n>0)
     const runs:any[] = []
-    for (const c of tiers) {
-
-
-      const t = c * 4
-      const s = await benchSummary(c, t)
-      runs.push({
-        concurrency: c, total: t, bytes, frames, delay_ms: delayMs, fanout, cpu_spin_ms: cpuSpinMs, gzip, summary: s,
-      })
+    const selModes = modesSuite.length ? modesSuite : [mode]
+    for (const m of selModes) {
+      for (const c of tiers) {
+        const t = c * 4
+        // temporarily switch mode to reuse benchSummary()
+        setMode(m as any)
+        await new Promise(r=>setTimeout(r,0))
+        const s = await benchSummary(c, t)
+        runs.push({
+          mode: m, concurrency: c, total: t, bytes, frames, delay_ms: delayMs, fanout, cpu_spin_ms: cpuSpinMs, gzip, summary: s,
+        })
+      }
     }
     await fetch('/bench/ui-save', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ meta: { target, mode, ts: Date.now() }, runs })
+      body: JSON.stringify({ meta: { target, modes: selModes, ts: Date.now() }, runs })
     })
     setRunning(false)
-
-  async function runOnceMode(m: 'sse'|'micro-plain'|'micro-chunked', abort?: AbortSignal): Promise<{ttft?:number, dur:number}> {
-    const t0 = performance.now()
-    try {
-      if (m === 'sse') {
-        const ctrl = new AbortController(); const signal = abort || ctrl.signal
-        const res = await fetch('/api/chat/completions', {
-          method: 'POST', headers: { 'content-type': 'application/json' }, signal,
-          body: JSON.stringify({ model: 'synthetic', runtime: 'elide', frames, delay_ms: delayMs, bytes_per_frame: bytes, cpu_spin_ms: cpuSpinMs, fanout, gzip })
-        })
-        if (!res.ok || !res.body) return { dur: performance.now()-t0 }
-        const reader = res.body.getReader(); let ttft: number | undefined
-        const readStart = performance.now()
-        while (true) { const { done } = await reader.read(); if (ttft===undefined) ttft = performance.now()-readStart; if (done) break }
-        return { ttft, dur: performance.now()-t0 }
-      }
-      if (m === 'micro-plain') {
-        const url = new URL('/micro/plain', target)
-        url.searchParams.set('bytes', String(bytes)); if (gzip) url.searchParams.set('gzip','1')
-        const res = await fetch(String(url), { signal: abort }); await res.arrayBuffer(); return { dur: performance.now()-t0 }
-      }
-      // micro-chunked
-      const url = new URL('/micro/chunked', target)
-      url.searchParams.set('bytes', String(bytes)); url.searchParams.set('chunks','4'); url.searchParams.set('delay_ms', String(delayMs)); if (gzip) url.searchParams.set('gzip','1')
-      const res = await fetch(String(url), { signal: abort }); const r0 = performance.now(); if (!res.body) return { dur: performance.now()-t0 }
-      const reader = res.body.getReader(); let ttft: number | undefined
-      while (true) { const { done } = await reader.read(); if (ttft===undefined) ttft = performance.now()-r0; if (done) break }
-      return { ttft, dur: performance.now()-t0 }
-    } catch { return { dur: performance.now()-t0 } }
   }
 
+
+  const [cliStatus, setCliStatus] = useState<string>('')
+
+  function toggleModeInSuite(m:string){
+    setModesSuite(prev=> prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m])
   }
 
+  async function runCliSuite(){
+    try{
+      setCliStatus('starting CLI run...')
+      const tiers = (customConc || '8,32,64,128,256,512,1024,2048,4096')
+        .split(',').map(s=>Number(s.trim())).filter(n=>Number.isFinite(n) && n>0)
+      const resp = await fetch('/bench/run-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
+        concurrency: tiers,
+        totals: tiers.map((c:number)=>c*4),
+        frames, delay_ms: delayMs, bytes, cpu_spin_ms: cpuSpinMs,
+        fanout, fanout_delay_ms: 0, gzip,
+        startServers: true, wslNode: false, wslFastapi: false,
+      })})
+      const j = await resp.json()
+      if (!j.ok){ setCliStatus('CLI run failed to start: '+(j.error||'unknown')); return }
+      setCliPid(j.pid)
+      setCliStatus('running (pid '+j.pid+')...')
+      const pid = j.pid
+      const poll = async()=>{
+        const r = await fetch('/bench/run-cli/status?pid='+pid)
+        const s = await r.json()
+        if (!s || !s.ok){ setCliStatus('status: not_found'); return }
+        setCliStatus(`status: ${s.status} (log: ${s.logPath || s.log || ''})`)
+        if (s.status==='running') setTimeout(poll, 2000)
+      }
+      poll()
+    }catch(e:any){ setCliStatus('error: '+(e?.message||String(e))) }
+  }
+
+  async function cancelCli(){
+    if (!cliPid) return
+    await fetch('/bench/run-cli/cancel?pid='+cliPid, { method:'POST' })
+    setCliStatus('cancel requested for pid '+cliPid)
+  }
 
   return (
     <div style={{ border:'1px solid #eee', padding:8 }}>
@@ -329,6 +342,13 @@ function BenchPanel() {
           <label>Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
           <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
           <label>Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span>Suite modes:</span>
+          <label><input type="checkbox" checked={modesSuite.includes('sse')} onChange={()=>toggleModeInSuite('sse')} /> SSE</label>
+          <label><input type="checkbox" checked={modesSuite.includes('micro-plain')} onChange={()=>toggleModeInSuite('micro-plain')} /> Micro plain</label>
+          <label><input type="checkbox" checked={modesSuite.includes('micro-chunked')} onChange={()=>toggleModeInSuite('micro-chunked')} /> Micro chunked</label>
+        </div>
+
           <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
         </>)}
         <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
@@ -341,6 +361,10 @@ function BenchPanel() {
         <label><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
         <button onClick={runBench} disabled={running}>{running?'Running...':'Run'}</button>
         <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results/index.html via /bench/ui-save">{running?'Running...':'Run full sweep + save'}</button>
+        <button onClick={runCliSuite} disabled={false} title="Run bench CLI with selected tiers; auto-updates results/index.html">Run via CLI (trio)</button>
+        <button onClick={cancelCli} disabled={!cliPid}>Cancel CLI</button>
+        {cliStatus && <span style={{ fontFamily:'monospace' }}> {cliStatus} </span>}
+
       </div>
 
 
