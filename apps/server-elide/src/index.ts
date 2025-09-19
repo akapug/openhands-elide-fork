@@ -2,6 +2,8 @@ import 'dotenv/config'
 import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createGzip } from 'node:zlib'
+
 import { register, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client'
 
 const PORT = Number(process.env.PORT || 8080);
@@ -59,32 +61,53 @@ async function handleChatProxy(req: any, res: any) {
         const frames = Number(body.frames ?? process.env.SYN_FRAMES ?? 200);
         const delayMs = Number(body.delay_ms ?? process.env.SYN_DELAY_MS ?? 5);
         const bytesPerFrame = Number(body.bytes_per_frame ?? process.env.SYN_BYTES ?? 64);
+        const cpuSpinMs = Number(body.cpu_spin_ms ?? process.env.SYN_CPU_SPIN_MS ?? 0);
+        const fanout = Number(body.fanout ?? process.env.SYN_FANOUT ?? 0);
+        const fanoutDelay = Number(body.fanout_delay_ms ?? process.env.SYN_FANOUT_DELAY_MS ?? 0);
+        const useGzip = String(body.gzip ?? process.env.SYN_GZIP ?? '').toLowerCase() === '1' || String(body.gzip ?? process.env.SYN_GZIP ?? '').toLowerCase() === 'true';
+
         const word = 'x';
         const wordsPerFrame = Math.max(1, Math.floor(bytesPerFrame / (word.length + 1))); // approximate
         // Minimal upstream header timing (no upstream)
         chatHdrsHist.labels(labels.runtime, labels.model).observe(0);
-        res.writeHead(200, {
+        const headers: Record<string,string> = {
           'content-type': 'text/event-stream',
           'transfer-encoding': 'chunked',
           'cache-control': 'no-cache',
-        });
+        };
+        if (useGzip) headers['content-encoding'] = 'gzip';
+        res.writeHead(200, headers);
+
         const encoder = new TextEncoder();
+        const writer: any = useGzip ? createGzip() : res;
+        if (useGzip) { (writer as any).pipe(res); }
+
+        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+        const spin = (ms: number) => { if (ms <= 0) return; const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
+
+        // Pre-stream fanout simulation (tool calls / RAG)
+        for (let i = 0; i < fanout; i++) {
+          if (fanoutDelay > 0) await sleep(fanoutDelay);
+          if (cpuSpinMs > 0) spin(cpuSpinMs);
+        }
+
         for (let i = 0; i < frames; i++) {
           if (i === 0 && !ttftObserved) {
             ttftObserved = true;
             chatTTFTHist.labels(labels.runtime, labels.model).observe(performance.now() - started);
           }
+          if (cpuSpinMs > 0) spin(cpuSpinMs);
           const text = (word + ' ').repeat(wordsPerFrame);
           const frame = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
           const buf = encoder.encode(frame);
           chatBytes.labels(labels.runtime, labels.model).inc(buf.length);
           const t = text.trim().length ? text.trim().split(/\s+/).length : 0;
           if (t) chatTokens.labels(labels.runtime, labels.model).inc(t);
-          res.write(buf);
-          if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+          writer.write(buf);
+          if (delayMs > 0) await sleep(delayMs);
         }
-        res.write('data: [DONE]\n\n');
-        res.end();
+        writer.write('data: [DONE]\n\n');
+        if (useGzip) (writer as any).end(); else res.end();
         statusLabel = '200';
       } catch (e: any) {
         res.writeHead(500, { 'content-type': 'text/plain' });
