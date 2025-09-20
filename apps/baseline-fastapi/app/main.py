@@ -84,3 +84,32 @@ async def chat(req: Request):
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
+
+
+
+@app.get("/micro/plain")
+async def micro_plain(bytes: int = 32):
+    try:
+        b = max(1, int(bytes))
+        data = ("x" * b)
+        return PlainTextResponse(data)
+    except Exception as e:
+        return PlainTextResponse(str(e), status_code=500)
+
+
+@app.get("/micro/chunked")
+async def micro_chunked(bytes: int = 32, chunks: int = 1, delay_ms: int = 0):
+    try:
+        b = max(1, int(bytes))
+        n = max(1, int(chunks))
+        d = max(0, int(delay_ms))
+        word = ("x" * b).encode("utf-8")
+
+        async def gen():
+            for _ in range(n):
+                yield word
+                if d > 0:
+                    await asyncio.sleep(d / 1000)
+        return StreamingResponse(gen(), media_type="application/octet-stream")
+    except Exception as e:
+        return PlainTextResponse(str(e), status_code=500)

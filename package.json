@@ -2,7 +2,7 @@
   "name": "openhands-elide-fork",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@9",
+  "packageManager": "pnpm@9.0.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -17,6 +17,7 @@
     "e2e": "echo \"e2e package not yet implemented\"",
     "bench": "pnpm -C packages/bench build && node packages/bench/dist/cli.js",
     "bench:trio": "pnpm -C packages/bench build && node packages/bench/dist/trio.js",
+    "bench:quad": "pnpm -C packages/bench build && node packages/bench/dist/quad.js",
     "start:all": "pnpm -C packages/bench build && node packages/bench/dist/start-all.js"
   },
   "license": "MIT",

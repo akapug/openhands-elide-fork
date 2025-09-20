@@ -98,6 +98,9 @@ Start servers in separate terminals:
 - FastAPI baseline (8082):
   - Create venv, install deps: `python -m venv .venv && . .venv/Scripts/activate && pip install -r apps/baseline-fastapi/requirements.txt`
   - Run: `pnpm -C apps/baseline-fastapi dev`
+- Flask baseline (8083):
+  - Create venv, install deps: `python -m venv .venv && . .venv/Scripts/activate && pip install -r apps/baseline-flask/requirements.txt`
+  - Run (gunicorn): `python -m gunicorn app.main:app -w 1 -b 0.0.0.0:8083` (cwd: apps/baseline-flask)
 
 Run sweeps and write distinct HTML reports:
 - Build once: `pnpm -C packages/bench build`
@@ -107,6 +110,26 @@ Run sweeps and write distinct HTML reports:
   - `set SYN_FRAMES=200&& set SYN_DELAY_MS=5&& set SYN_BYTES=64&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8081 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-express.html`
 - FastAPI (8082):
   - `set SYN_FRAMES=200&& set SYN_DELAY_MS=5&& set SYN_BYTES=64&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8082 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-fastapi.html`
+- Flask (8083):
+  - `set SYN_FRAMES=200&& set SYN_DELAY_MS=5&& set SYN_BYTES=64&& node packages/bench/dist/cli.js sweep --base-url=http://localhost:8083 --concurrency=8 --total=64 --prompt="synthetic" --html --out=bench-flask.html`
+
+## wrk2 mode (non-streaming HTTP baseline)
+Use wrk2 for calibrated fixed-rate benchmarking against non-streaming endpoints to isolate HTTP serving overhead.
+
+- Endpoints available on all baselines (and elide):
+  - `/micro/plain?bytes=1024` (fixed-length plain text)
+  - `/micro/chunked?bytes=1024&chunks=10&delay_ms=0` (chunked octet-stream)
+
+Examples:
+- macOS (Homebrew): `brew install wrk` (for wrk2, build from https://github.com/giltene/wrk2)
+- Linux (Ubuntu): build wrk2 from source, then run:
+  - `WRK_BIN=wrk2 WRK_URL=http://127.0.0.1:8081/micro/plain?bytes=1024 WRK_RATE=5000 WRK_DURATION=30s WRK_CONNECTIONS=128 WRK_THREADS=4 WRK_HTML=wrk2-express.html node packages/bench/dist/wrk2.js`
+  - Repeat for :8080 (elide), :8082 (fastapi), :8083 (flask)
+
+Notes:
+- wrk (classic) does open-loop but not fixed rate; wrk2 supports `-R` for fixed rate. The runner accepts either via WRK_BIN.
+- Prefer running all targets on the same machine and CPU governor for apples-to-apples.
+
 
 Notes:
 - On Git Bash/MSYS, avoid using a leading slash in a --path override; default path is /api/chat/completions so no override needed here.

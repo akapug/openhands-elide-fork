@@ -107,9 +107,9 @@ async function main() {
 
   for (const key of scenarioKeys) {
     const rows = scenarios.get(key);
-    // order: elide, express, fastapi
+    // order: elide, express, fastapi, flask
     rows.sort((a, b) => {
-      const pri = { elide: 0, express: 1, fastapi: 2 };
+      const pri = { elide: 0, express: 1, fastapi: 2, flask: 3 };
       const pa = pri[a.server] ?? 9;
       const pb = pri[b.server] ?? 9;
       return pa - pb;
@@ -168,7 +168,7 @@ async function main() {
                       '<div class="sub">Per-run reports grouped by scenario. Click a file to open.</div>';
         for (const key of keys) {
           const rows = perScenarios.get(key);
-          rows.sort((a,b)=>{ const pri={elide:0,express:1,fastapi:2}; return (pri[a.server]??9)-(pri[b.server]??9); });
+          rows.sort((a,b)=>{ const pri={elide:0,express:1,fastapi:2,flask:3}; return (pri[a.server]??9)-(pri[b.server]??9); });
           perHtml += `<h3>Scenario ${htmlEscape(key)}</h3>`;
           perHtml += '<table><thead><tr>'+
                      '<th>server</th><th>file</th><th>rps</th><th>ttft_p50</th><th>ttft_p95</th><th>ttft_p99</th><th>dur_p95</th>'+

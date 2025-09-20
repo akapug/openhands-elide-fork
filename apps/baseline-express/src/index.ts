@@ -76,6 +76,48 @@ app.post('/api/chat/completions', async (req: any, res: any) => {
   }
 })
 
+// Non-streaming micro endpoints for wrk2 and microbenchmarks
+app.get('/micro/plain', (req: any, res: any) => {
+  try {
+    const bytes = Math.max(1, Number(req.query?.bytes ?? '32'))
+    const buf = Buffer.alloc(bytes, 120)
+    res.status(200)
+    res.setHeader('Content-Type', 'text/plain')
+    res.setHeader('Content-Length', String(buf.length))
+    res.end(buf)
+  } catch (e: any) {
+    res.status(500).type('text/plain').end(String(e?.message || e))
+  }
+})
+
+app.get('/micro/chunked', async (req: any, res: any) => {
+  try {
+    const bytesPer = Math.max(1, Number(req.query?.bytes ?? '32'))
+    const chunks = Math.max(1, Number(req.query?.chunks ?? '1'))
+    const delay = Math.max(0, Number(req.query?.delay_ms ?? '0'))
+    const useGzip = String(req.query?.gzip ?? '').toLowerCase() === '1' || String(req.query?.gzip ?? '').toLowerCase() === 'true'
+    const word = Buffer.alloc(bytesPer, 120)
+    res.status(200)
+    res.setHeader('Content-Type', 'application/octet-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Transfer-Encoding', 'chunked')
+    if (useGzip) res.setHeader('Content-Encoding', 'gzip')
+
+    const writer: any = useGzip ? createGzip() : res
+    if (useGzip) writer.pipe(res)
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+    for (let i=0;i<chunks;i++) {
+      writer.write(word)
+      if (delay > 0) await sleep(delay)
+    }
+    if (useGzip) writer.end(); else res.end()
+  } catch (e: any) {
+    if (!res.headersSent) res.status(500).type('text/plain')
+    res.end(String(e?.message || e))
+  }
+})
+
+
 app.listen(PORT, () => {
   console.log(`baseline-express listening on :${PORT}`)
 })

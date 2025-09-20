@@ -19,3 +19,14 @@ Thumbs.db
 # Build artifacts
 *.tsbuildinfo
 
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+**/.venv/
+
+# Bench results (generated)
+packages/bench/results/

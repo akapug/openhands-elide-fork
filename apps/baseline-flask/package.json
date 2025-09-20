@@ -1,0 +1,10 @@
+{
+  "name": "@openhands-elide/baseline-flask",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "python -m gunicorn app.main:app -w 1 -b 0.0.0.0:8083",
+    "start": "python -m gunicorn app.main:app -w 1 -b 0.0.0.0:8083"
+  }
+}
+

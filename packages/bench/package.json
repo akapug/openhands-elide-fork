@@ -9,9 +9,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "smoke": "node dist/cli.js smoke",
-    "run": "node dist/cli.js run"
+    "run": "node dist/cli.js run",
+    "quad": "node dist/quad.js",
+    "wrk2": "node dist/wrk2.js"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/node": "20"
+  }
 }
-
