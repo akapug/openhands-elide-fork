@@ -21,12 +21,13 @@ function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<s
   return new Promise<void>((resolve, reject) => {
     const conc = extraEnv.QUAD_CONCURRENCY || process.env.QUAD_CONCURRENCY || '8'
     const total = extraEnv.QUAD_TOTAL || process.env.QUAD_TOTAL || '64'
+    const outAbs = resolvePath(resultsDir(), out)
     const args = [
       repoRoot() + '/packages/bench/dist/cli.js', 'sweep',
       `--base-url=${baseURL}`,
       `--concurrency=${conc}`,
       `--total=${total}`,
-      '--prompt=synthetic', '--html', `--out=${out}`,
+      '--prompt=synthetic', '--html', `--out=${outAbs}`,
     ]
     const child = spawn(process.execPath, args, {
       env: { ...process.env, ...extraEnv },
@@ -113,6 +114,16 @@ async function main() {
   const baseEnv = { ...process.env }
   let elide: any = null, express: any = null, fastapi: any = null, flask: any = null
 
+  // Base URLs (allow override via env; supports docker-compose service names)
+  const baseElide   = String(process.env.QUAD_BASE_ELIDE   || 'http://localhost:8080')
+  const baseExpress = String(process.env.QUAD_BASE_EXPRESS || 'http://localhost:8081')
+  const baseFastapi = String(process.env.QUAD_BASE_FASTAPI || 'http://localhost:8082')
+  const baseFlask   = String(process.env.QUAD_BASE_FLASK   || 'http://localhost:8083')
+
+  // Optional: dockerized Flask
+  const useDockerFlask = String(process.env.QUAD_DOCKER_FLASK || '').toLowerCase() === '1' || String(process.env.QUAD_DOCKER_FLASK || '').toLowerCase() === 'true'
+
+  // Start only if requested AND not already healthy; health probes run below
   if (startAll && targets.has('elide')) {
     // Build and start Node Elide
     if (process.platform === 'win32' && (String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='1' || String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='true')) {
@@ -161,24 +172,35 @@ async function main() {
   }
 
   if (startAll && targets.has('flask')) {
-    const synKeys = ['SYN_FRAMES','SYN_DELAY_MS','SYN_BYTES','SYN_CPU_SPIN_MS','SYN_FANOUT','SYN_FANOUT_DELAY_MS','SYN_GZIP'] as const
-    const kv = synKeys.map(k=> process.env[k] ? `${k}=${process.env[k]}` : '').filter(Boolean).join(' ')
-    if (process.platform === 'win32') {
-      const rootWsl = winPathToWsl(repoRoot())
-      const cmd = `${kv} python3 -m venv .venv && .venv/bin/python -m pip -q install -U pip && .venv/bin/pip -q install -r requirements.txt && ${kv} .venv/bin/python -m gunicorn app.main:app -w 1 -b 127.0.0.1:8083`
-      flask = startServer('flask','wsl.exe',['--cd', `${rootWsl}/apps/baseline-flask`, 'bash','-lc', cmd], {})
+    if (useDockerFlask) {
+      // Bring up dockerized Flask on 8083 if not already running
+      const composeFile = resolvePath(repoRoot(), 'infra/docker-compose.yml')
+      try { startServer('docker-flask', process.platform==='win32'?'docker.exe':'docker', ['compose','-f', composeFile, 'up','-d','flask']) } catch {}
     } else {
-      flask = startServer('flask', process.env.PYTHON || 'python3', ['-m','gunicorn','app.main:app','-w','1','-b','0.0.0.0:8083'], { cwd: repoRoot() + '/apps/baseline-flask' })
+      const synKeys = ['SYN_FRAMES','SYN_DELAY_MS','SYN_BYTES','SYN_CPU_SPIN_MS','SYN_FANOUT','SYN_FANOUT_DELAY_MS','SYN_GZIP'] as const
+      const kv = synKeys.map(k=> process.env[k] ? `${k}=${process.env[k]}` : '').filter(Boolean).join(' ')
+      if (process.platform === 'win32') {
+        const rootWsl = winPathToWsl(repoRoot())
+        const cmd = `${kv} python3 -m venv .venv && .venv/bin/python -m pip -q install -U pip && .venv/bin/pip -q install -r requirements.txt && ${kv} .venv/bin/python -m gunicorn app.main:app -w 1 -b 127.0.0.1:8083`
+        flask = startServer('flask','wsl.exe',['--cd', `${rootWsl}/apps/baseline-flask`, 'bash','-lc', cmd], {})
+      } else {
+        flask = startServer('flask', process.env.PYTHON || 'python3', ['-m','gunicorn','app.main:app','-w','1','-b','0.0.0.0:8083'], { cwd: repoRoot() + '/apps/baseline-flask' })
+      }
     }
   }
 
   try {
-    const waits: Array<Promise<void>> = []
-    if (targets.has('elide')) waits.push(waitHealthy('elide','http://localhost:8080/healthz'))
-    if (targets.has('express')) waits.push(waitHealthy('express','http://localhost:8081/healthz'))
-    if (targets.has('fastapi')) waits.push(waitHealthy('fastapi','http://localhost:8082/healthz'))
-    if (targets.has('flask')) waits.push(waitHealthy('flask','http://localhost:8083/healthz'))
-    await Promise.all(waits)
+    // Probe health per target; do not fail the whole run if one target is down
+    const healthy: Record<string, boolean> = { elide:false, express:false, fastapi:false, flask:false }
+    const probes: Array<Promise<void>> = []
+    const probe = async (name:string, url:string) => {
+      try { await waitHealthy(name, url) ; healthy[name] = true } catch (e:any) { process.stderr.write(`[${name}][err] ${e?.message||e}\n`) }
+    }
+    if (targets.has('elide')) probes.push(probe('elide',`${baseElide.replace(/\/$/, '')}/healthz`))
+    if (targets.has('express')) probes.push(probe('express',`${baseExpress.replace(/\/$/, '')}/healthz`))
+    if (targets.has('fastapi')) probes.push(probe('fastapi',`${baseFastapi.replace(/\/$/, '')}/healthz`))
+    if (targets.has('flask')) probes.push(probe('flask',`${baseFlask.replace(/\/$/, '')}/healthz`))
+    await Promise.all(probes)
 
     const runForTier = async (tier: {c:number,t:number}) => {
       const baseEnv = { ...process.env }
@@ -193,17 +215,17 @@ async function main() {
       const outFl = `${RUN_REL}/bench-flask.${tier.c}x${tier.t}.html`
 
       if (sequential) {
-        if (targets.has('elide'))   { try { await runSweep('elide','http://localhost:8080', outE, envElide) } catch (e) { writeFail(outE,'elide',e) } }
-        if (targets.has('express')) { try { await runSweep('express','http://localhost:8081', outX, envExpress) } catch (e) { writeFail(outX,'express',e) } }
-        if (targets.has('fastapi')) { try { await runSweep('fastapi','http://localhost:8082', outF, envFastapi) } catch (e) { writeFail(outF,'fastapi',e) } }
-        if (targets.has('flask'))   { try { await runSweep('flask','http://localhost:8083', outFl, envFlask) } catch (e) { writeFail(outFl,'flask',e) } }
+        if (targets.has('elide'))   { if (healthy.elide)   { try { await runSweep('elide',baseElide, outE, envElide) } catch (e) { writeFail(outE,'elide',e) } } else { writeFail(outE,'elide',new Error('not healthy')) } }
+        if (targets.has('express')) { if (healthy.express) { try { await runSweep('express',baseExpress, outX, envExpress) } catch (e) { writeFail(outX,'express',e) } } else { writeFail(outX,'express',new Error('not healthy')) } }
+        if (targets.has('fastapi')) { if (healthy.fastapi) { try { await runSweep('fastapi',baseFastapi, outF, envFastapi) } catch (e) { writeFail(outF,'fastapi',e) } } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
+        if (targets.has('flask'))   { if (healthy.flask)   { try { await runSweep('flask',baseFlask, outFl, envFlask) } catch (e) { writeFail(outFl,'flask',e) } } else { writeFail(outFl,'flask',new Error('not healthy')) } }
       } else {
         const jobs: Array<Promise<any>> = []
         const names: string[] = []
-        if (targets.has('elide'))   { jobs.push(runSweep('elide','http://localhost:8080', outE, envElide)); names.push('elide') }
-        if (targets.has('express')) { jobs.push(runSweep('express','http://localhost:8081', outX, envExpress)); names.push('express') }
-        if (targets.has('fastapi')) { jobs.push(runSweep('fastapi','http://localhost:8082', outF, envFastapi)); names.push('fastapi') }
-        if (targets.has('flask'))   { jobs.push(runSweep('flask','http://localhost:8083', outFl, envFlask)); names.push('flask') }
+        if (targets.has('elide'))   { if (healthy.elide)   { jobs.push(runSweep('elide',baseElide, outE, envElide)); names.push('elide') } else { writeFail(outE,'elide',new Error('not healthy')) } }
+        if (targets.has('express')) { if (healthy.express) { jobs.push(runSweep('express',baseExpress, outX, envExpress)); names.push('express') } else { writeFail(outX,'express',new Error('not healthy')) } }
+        if (targets.has('fastapi')) { if (healthy.fastapi) { jobs.push(runSweep('fastapi',baseFastapi, outF, envFastapi)); names.push('fastapi') } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
+        if (targets.has('flask'))   { if (healthy.flask)   { jobs.push(runSweep('flask',baseFlask, outFl, envFlask)); names.push('flask') } else { writeFail(outFl,'flask',new Error('not healthy')) } }
         const results = await Promise.allSettled(jobs)
         for (let i=0;i<results.length;i++) {
           const nm = names[i]

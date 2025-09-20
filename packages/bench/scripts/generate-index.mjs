@@ -72,7 +72,9 @@ async function main() {
     const html = await fs.readFile(full, 'utf8');
     const metrics = parseMetrics(html);
     const meta = labelFromFilename(f);
-    entries.push({ file: f, ...meta, ...metrics });
+    const conc = Number.isFinite(metrics.concurrency) ? metrics.concurrency : meta.conc;
+    const total = Number.isFinite(metrics.total) ? metrics.total : meta.total;
+    entries.push({ file: f, ...meta, ...metrics, concurrency: conc, total });
   }
 
   const uiRuns = [];
@@ -154,7 +156,9 @@ async function main() {
           const html = await fs.readFile(path.join(rp, f), 'utf8');
           const metrics = parseMetrics(html);
           const meta = labelFromFilename(f);
-          perEntries.push({ file: f, ...meta, ...metrics });
+          const conc = Number.isFinite(metrics.concurrency) ? metrics.concurrency : meta.conc;
+          const total = Number.isFinite(metrics.total) ? metrics.total : meta.total;
+          perEntries.push({ file: f, ...meta, ...metrics, concurrency: conc, total });
         }
         // group by scenario
         const perScenarios = new Map();
@@ -166,10 +170,11 @@ async function main() {
         const keys = Array.from(perScenarios.keys()).sort((a,b)=>{
           const [ac,at]=a.split('x').map(Number); const [bc,bt]=b.split('x').map(Number); return ac-bc || at-bt;
         });
+        const present = Array.from(new Set(perEntries.map(e=>e.server))).sort().join(', ')
         let perHtml = '<!doctype html><meta charset="utf-8"/><title>Bench Run '+htmlEscape(name)+'</title>'+
-                      '<style>body{font:14px system-ui,Segoe UI,Arial} table{border-collapse:collapse;margin:12px 0} td,th{border:1px solid #ddd;padding:6px} h2{margin-top:20px}</style>'+
-                      `<h2>Bench Run ${htmlEscape(name)}</h2>`+
-                      '<div class="sub">Per-run reports grouped by scenario. Click a file to open.</div>';
+                      '<style>body{font:14px system-ui,Segoe UI,Arial} table{border-collapse:collapse;margin:12px 0} td,th{border:1px solid #ddd;padding:6px} h2{margin-top:20px} .sub{color:#666;font-size:12px} .hdr{display:flex;gap:10px;align-items:center}</style>'+
+                      `<div class="hdr"><h2 style="margin:0">Bench Run ${htmlEscape(name)}</h2><button onclick="navigator.clipboard.writeText(location.href)">Copy link</button><a href="../../index.html">Back to Results</a></div>`+
+                      `<div class="sub">Targets in this run: ${htmlEscape(present)}. Per-run reports grouped by scenario. Click a file to open.</div>`;
         for (const key of keys) {
           const rows = perScenarios.get(key);
           rows.sort((a,b)=>{ const pri={elide:0,express:1,fastapi:2,flask:3}; return (pri[a.server]??9)-(pri[b.server]??9); });

@@ -565,7 +565,7 @@ function BenchPanel() {
         <div style={{ flexBasis:'100%', height:8 }} />
 
         </>)}
-        <label title="Comma-separated tiers used by the CLI trio run">Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
+        <label title="Comma-separated tiers used by the CLI suite run">Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
         <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running} title="Fill tiers with a high-end preset">Preset: Max (64..4096)</button>
         <div style={{ flexBasis:'100%', height:8 }} />
 

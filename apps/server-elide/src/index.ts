@@ -461,6 +461,7 @@ const server = createServer(async (req, res) => {
       const startServers = body.startServers !== false
       const wslNode = !!body.wslNode
       const wslFastapi = !!body.wslFastapi
+      const runtime = String(body.runtime || 'elide')
       const ts = Date.now()
       const runId = new Date(ts).toISOString().replace(/[:.]/g,'-')
       const runRel = `runs/${runId}`
@@ -479,6 +480,7 @@ const server = createServer(async (req, res) => {
         QUAD_WSL_NODE: wslNode ? '1' : '',
         QUAD_WSL_FASTAPI: wslFastapi ? '1' : '',
         QUAD_TARGETS: targetsArr.join(','),
+        QUAD_DOCKER_FLASK: '1',
         SYN_FRAMES: String(frames),
         SYN_DELAY_MS: String(delay_ms),
         SYN_BYTES: String(bytes),
