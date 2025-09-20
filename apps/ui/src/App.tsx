@@ -397,6 +397,12 @@ function BenchPanel() {
   const [cliStatus, setCliStatus] = useState<string>('')
   const [cliLogs, setCliLogs] = useState<Array<{text:string, level?:string}>>([])
 
+
+  const [targets, setTargets] = useState<{elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ elide:true, express:true, fastapi:true, flask:true })
+  function toggleTarget(name: 'elide'|'express'|'fastapi'|'flask'){
+    setTargets(prev => ({ ...prev, [name]: !prev[name] }))
+  }
+
   function toggleModeInSuite(m:string){
     setModesSuite(prev=> prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m])
   }
@@ -408,11 +414,13 @@ function BenchPanel() {
       const tiers = (customConc || '8,32,64,128,256,512,1024,2048,4096')
         .split(',').map(s=>Number(s.trim())).filter(n=>Number.isFinite(n) && n>0)
 
+      const selectedTargets = Object.entries(targets).filter(([,v])=>!!v).map(([k])=>k)
       const resp = await fetch('/bench/run-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
         concurrency: tiers,
         totals: tiers.map((c:number)=>c*4),
         frames, delay_ms: delayMs, bytes, cpu_spin_ms: cpuSpinMs,
         fanout, fanout_delay_ms: 0, gzip,
+        targets: selectedTargets,
         startServers: true, wslNode: false, wslFastapi: false,
       })})
       const j = await resp.json()
@@ -438,7 +446,7 @@ function BenchPanel() {
         try{
           const d = JSON.parse(ev.data); const line = (d?.text ?? String(ev.data)); const level = d?.level
           pushLog(line, level)
-          const m = /\[(elide|express|fastapi)\][^\n]*wrote\s+bench-(?:elide|express|fastapi)\.(\d+)x(\d+)\.html/i.exec(line)
+          const m = /\[(elide|express|fastapi|flask)\][^\n]*wrote\s+bench-(?:elide|express|fastapi|flask)\.(\d+)x(\d+)\.html/i.exec(line)
           if (m) {
             const name = m[1]; const c = Number(m[2]); const t = Number(m[3])
             setCliProgress(prev => prev.find(p=>p.name===name && p.c===c && p.t===t) ? prev : prev.concat({ name, c, t }))
@@ -502,6 +510,14 @@ function BenchPanel() {
         <label title="Payload per frame (SSE) or per chunk (micro)">Bytes <input type="number" value={bytes} onChange={e=>setBytes(Number(e.target.value))} style={{ width:90 }} /></label>
         {mode==='sse' && (<>
           <label title="Number of SSE frames to stream">Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }} title="Select which servers to include in the CLI suite">
+          <span>Targets:</span>
+          <label><input type="checkbox" checked={targets.elide} onChange={()=>toggleTarget('elide')} /> Elide</label>
+          <label><input type="checkbox" checked={targets.express} onChange={()=>toggleTarget('express')} /> Express</label>
+          <label><input type="checkbox" checked={targets.fastapi} onChange={()=>toggleTarget('fastapi')} /> FastAPI</label>
+          <label><input type="checkbox" checked={targets.flask} onChange={()=>toggleTarget('flask')} /> Flask</label>
+        </div>
+
           <label title="Delay between frames (ms)">Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
           <label title="Simulated tool/RAG calls before streaming">Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
         <div style={{ display:'flex', alignItems:'center', gap:6 }} title="Include additional modes in the full suite">
@@ -568,7 +584,7 @@ function BenchPanel() {
         <label title="Enable gzip on responses/stream for added server cost"><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
         <button onClick={runBench} disabled={running} title="Quick single run using the fields above">{running?'Running...':'Run'}</button>
         <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results (UI)">{running?'Running...':'Run full sweep + save'}</button>
-        <button onClick={runCliSuite} disabled={false} title="Run bench CLI with selected tiers; writes per-run files under /results/runs">Run via CLI (trio)</button>
+        <button onClick={runCliSuite} disabled={false} title="Run bench CLI with selected tiers and targets; writes per-run files under /results/runs">Run via CLI (suite)</button>
         <button onClick={cancelCli} disabled={!cliPid} title="Send cancel to the running CLI process">Cancel CLI</button>
         {cliStatus && <span style={{ fontFamily:'monospace' }}> {cliStatus} </span>}
 

@@ -467,17 +467,18 @@ const server = createServer(async (req, res) => {
       mkdirSync(RESULTS_DIR, { recursive: true })
       const logPath = resolve(RESULTS_DIR, `cli-${ts}.log`)
       const out = createWriteStream(logPath)
-      const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/trio.js')
+      const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/quad.js')
+      const targetsArr: string[] = Array.isArray(body.targets) && body.targets.length ? body.targets.map((s:string)=>String(s).toLowerCase()) : ['elide','express','fastapi','flask']
       const env = {
         ...process.env,
-        TRIO_RUN_ID: runId,
-        TRIO_RUN_DIR: runRel,
-        TRIO_START_SERVERS: startServers ? '1' : '',
-        TRIO_MODE: 'sequential',
-        TRIO_CONCURRENCY_LIST: concList.join(','),
-        TRIO_TOTAL_LIST: totalList.join(','),
-        TRIO_WSL_NODE: wslNode ? '1' : '',
-        TRIO_WSL_FASTAPI: wslFastapi ? '1' : '',
+        QUAD_RUN_ID: runId,
+        QUAD_START_SERVERS: startServers ? '1' : '',
+        QUAD_MODE: 'sequential',
+        QUAD_CONCURRENCY_LIST: concList.join(','),
+        QUAD_TOTAL_LIST: totalList.join(','),
+        QUAD_WSL_NODE: wslNode ? '1' : '',
+        QUAD_WSL_FASTAPI: wslFastapi ? '1' : '',
+        QUAD_TARGETS: targetsArr.join(','),
         SYN_FRAMES: String(frames),
         SYN_DELAY_MS: String(delay_ms),
         SYN_BYTES: String(bytes),
