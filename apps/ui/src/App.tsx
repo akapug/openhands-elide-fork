@@ -119,6 +119,11 @@ export default function App() {
       </aside>
       <main style={{ padding:12 }}>
         <h2>OpenHands–Elide</h2>
+        <div style={{ display:'flex', gap:12, alignItems:'center', margin:'4px 0' }}>
+          <a href="/results/index.html" target="_blank" rel="noreferrer">Results index</a>
+          <a href="/metrics" target="_blank" rel="noreferrer">Metrics</a>
+        </div>
+
         <div style={{ marginBottom:12 }}>
           <textarea ref={taRef} rows={4} style={{ width:'100%' }} value={input} onChange={e=>setInput(e.target.value)} />
           <button onClick={send} disabled={streaming}>Send</button>

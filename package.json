@@ -14,11 +14,15 @@
     "dev": "cross-env VITE_DEV_URL=http://localhost:5173 concurrently -k -n server,ui -c blue,magenta \"pnpm -C apps/server-elide dev\" \"pnpm -C apps/ui dev\"",
     "build": "pnpm -r --workspace-concurrency=1 --filter ./packages/** --filter ./apps/** build",
     "test": "pnpm -r test || true",
-    "e2e": "echo \"e2e package not yet implemented\"",
+    "e2e": "pnpm -C packages/e2e test",
     "bench": "pnpm -C packages/bench build && node packages/bench/dist/cli.js",
     "bench:trio": "pnpm -C packages/bench build && node packages/bench/dist/trio.js",
     "bench:quad": "pnpm -C packages/bench build && node packages/bench/dist/quad.js",
-    "start:all": "pnpm -C packages/bench build && node packages/bench/dist/start-all.js"
+    "start:all": "pnpm -C packages/bench build && node packages/bench/dist/start-all.js",
+    "docker:build": "docker compose -f infra/docker-compose.yml build node-workspace fastapi flask",
+    "docker:up": "docker compose -f infra/docker-compose.yml up -d elide express fastapi flask",
+    "docker:down": "docker compose -f infra/docker-compose.yml down",
+    "docker:bench": "docker compose -f infra/docker-compose.yml run --rm bench"
   },
   "license": "MIT",
   "devDependencies": {

@@ -136,11 +136,15 @@ async function main() {
   // Per-run folders under results/runs/* → generate a run index and list here
   const runsRoot = path.join(resultsDir, 'runs');
   let runLinks = '';
+  let latestName = '';
+
   try {
     const names = await fs.readdir(runsRoot);
     for (const name of names.sort()) {
       const rp = path.join(runsRoot, name);
       try {
+        latestName = name; // track last name in sorted order
+
         const st = await fs.stat(rp);
         if (!st.isDirectory()) continue;
         const benchFiles = (await fs.readdir(rp)).filter(f=>f.startsWith('bench-') && f.endsWith('.html')).sort();
@@ -193,6 +197,10 @@ async function main() {
   } catch {}
   if (runLinks) {
     out += '<h2>Runs</h2><table><thead><tr><th>run</th><th># files</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
+  }
+
+  if (latestName) {
+    out += `<div class=\"sub\">Latest run: <a href=\"runs/${encodeURI(latestName)}/index.html\">${htmlEscape(latestName)}</a></div>`;
   }
 
   if (uiRuns.length) {

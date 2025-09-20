@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 function repoRoot() {
   const here = dirname(fileURLToPath(import.meta.url))
   // packages/e2e/tests -> repo root is ../../..
-  return join(here, '..', '..')
+  return join(here, '..', '..', '..')
 }
 
 async function waitHealth(url: string) {

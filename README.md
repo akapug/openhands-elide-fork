@@ -26,6 +26,29 @@ node elide-hands/openhands-elide-fork/apps/server-elide/dist/index.js
 ```
 Then open http://localhost:8080
 
+## Docker (apples-to-apples) Quickstart
+- Build workspace and Python images:
+  - `docker compose -f infra/docker-compose.yml build node-workspace fastapi flask`
+- Start the servers:
+  - `docker compose -f infra/docker-compose.yml up -d elide express fastapi flask`
+- Open the UI/bench at: http://localhost:8080
+- Optional: run the quad bench (writes HTML under packages/bench/results):
+  - `docker compose -f infra/docker-compose.yml run --rm bench`
+
+Notes:
+- Results are bind-mounted to `packages/bench/results/` on the host.
+- Service endpoints in the docker network: `elide:8080`, `express:8081`, `fastapi:8082`, `flask:8083`.
+- A wrk utility is available: `docker compose -f infra/docker-compose.yml --profile tools run --rm wrk wrk --help`.
+
+## Playwright E2E (smoke)
+- Ensure server is running at http://127.0.0.1:8080 (docker or local)
+- Install Playwright browsers once: `npx playwright install --with-deps`
+- Run tests: `pnpm -C packages/e2e test`
+
+## Handy scripts
+- `pnpm docker:build` / `pnpm docker:up` / `pnpm docker:down` / `pnpm docker:bench`
+
+
 ## Using the Bench (from the UI)
 - Single Run: fills fields above and clicks “Run” → shows live stats and a quick summary.
 - Full sweep + save: runs standard tiers (8×64 → 128×512) and saves a UI JSON; visible under /results/index.html.
