@@ -49,9 +49,22 @@ function fmt(n) {
 }
 
 async function main() {
+  // Migrate any legacy root-level bench-*.html into a per-run folder
+  const runsRootTop = path.join(resultsDir, 'runs');
+  await fs.mkdir(runsRootTop, { recursive: true }).catch(()=>{});
   const all = await fs.readdir(resultsDir)
-  const files = all.filter((f) => f.startsWith('bench-') && f.endsWith('.html')).sort();
-  const uiFiles = all.filter((f) => f.startsWith('ui-') && f.endsWith('.json')).sort();
+  const legacy = all.filter((f) => f.startsWith('bench-') && f.endsWith('.html')).sort();
+  if (legacy.length) {
+    const runId = 'migrated-' + new Date().toISOString().replace(/[:.]/g,'-');
+    const rp = path.join(runsRootTop, runId);
+    await fs.mkdir(rp, { recursive: true }).catch(()=>{});
+    for (const f of legacy) {
+      try { await fs.rename(path.join(resultsDir, f), path.join(rp, f)); } catch {}
+    }
+  }
+  const allNow = await fs.readdir(resultsDir)
+  const files = allNow.filter((f) => f.startsWith('bench-') && f.endsWith('.html')).sort();
+  const uiFiles = allNow.filter((f) => f.startsWith('ui-') && f.endsWith('.json')).sort();
 
   const entries = [];
   for (const f of files) {
