@@ -1,5 +1,6 @@
 version: '3.9'
 services:
+  # OpenAI-compatible runtimes (optional)
   vllm:
     image: vllm/vllm-openai:latest
     command: ["--model", "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"]
@@ -11,9 +12,70 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
   tgi:
     image: ghcr.io/huggingface/text-generation-inference:latest
     environment:
       - HUGGINGFACE_HUB_CACHE=/data
     ports: ["8086:80"]
 
+  # Node workspace image builds monorepo TS apps and bench
+  node-workspace:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: openhands-elide/workspace:latest
+
+  # Elide server (serves UI + bench endpoints)
+  elide:
+    image: openhands-elide/workspace:latest
+    depends_on: []
+    command: ["node", "apps/server-elide/dist/index.js"]
+    ports: ["8080:8080"]
+    working_dir: /app
+    volumes:
+      - ../packages/bench/results:/app/packages/bench/results
+
+  # Express baseline
+  express:
+    image: openhands-elide/workspace:latest
+    command: ["node", "apps/baseline-express/dist/index.js"]
+    ports: ["8081:8081"]
+    working_dir: /app
+
+  # FastAPI baseline (uvicorn)
+  fastapi:
+    build:
+      context: ../apps/baseline-fastapi
+      dockerfile: Dockerfile
+    image: openhands-elide/baseline-fastapi:latest
+    ports: ["8082:8082"]
+
+  # Flask baseline (gunicorn)
+  flask:
+    build:
+      context: ../apps/baseline-flask
+      dockerfile: Dockerfile
+    image: openhands-elide/baseline-flask:latest
+    ports: ["8083:8083"]
+
+  # Optional wrk (wrk, not wrk2). For wrk2, swap image or build from source.
+  wrk:
+    image: skandyla/wrk
+    entrypoint: ["/bin/sh", "-lc"]
+    command: ["wrk --help"]
+    profiles: ["tools"]
+
+  # Bench orchestrator (one-shot). Override command as needed.
+  bench:
+    image: openhands-elide/workspace:latest
+    depends_on: [elide, express, fastapi, flask]
+    working_dir: /app
+    command: ["node", "packages/bench/dist/quad.js"]
+    environment:
+      - QUAD_BASE_ELIDE=http://elide:8080
+      - QUAD_BASE_EXPRESS=http://express:8081
+      - QUAD_BASE_FASTAPI=http://fastapi:8082
+      - QUAD_BASE_FLASK=http://flask:8083
+    volumes:
+      - ../packages/bench/results:/app/packages/bench/results

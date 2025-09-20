@@ -134,3 +134,22 @@ Notes:
 Notes:
 - On Git Bash/MSYS, avoid using a leading slash in a --path override; default path is /api/chat/completions so no override needed here.
 - Compare TTFT, RPS, and CPU usage across the three reports; the synthetic mode highlights serving-layer differences only.
+
+
+## Docker (preferred for apples-to-apples)
+
+A compose stack is provided under `infra/docker-compose.yml` that brings up all baselines and the Elide server. It uses a monorepo workspace image for Node apps and separate Python images for FastAPI/Flask.
+
+Quick start:
+- Build workspace and Python images:
+  - `docker compose -f infra/docker-compose.yml build node-workspace fastapi flask`
+- Start the servers:
+  - `docker compose -f infra/docker-compose.yml up -d elide express fastapi flask`
+- Open UI/bench: http://localhost:8080
+- Optional: run the quad bench (writes HTML under packages/bench/results):
+  - `docker compose -f infra/docker-compose.yml run --rm bench`
+
+Notes:
+- Results are bind-mounted to `packages/bench/results/` on the host.
+- Service endpoints inside the network: `elide:8080`, `express:8081`, `fastapi:8082`, `flask:8083`.
+- A `wrk` utility is available (profile `tools`): `docker compose -f infra/docker-compose.yml --profile tools run --rm wrk wrk --help`.
