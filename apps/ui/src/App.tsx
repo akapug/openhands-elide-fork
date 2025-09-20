@@ -156,6 +156,7 @@ function BenchPanel() {
   const [cliSamples, setCliSamples] = useState<Array<{t:number,cpu:number,rssMb:number}>>([])
   const [cliLinks, setCliLinks] = useState<{log?:string,index?:string}>({})
 
+
   const [mode, setMode] = useState<'sse'|'micro-plain'|'micro-chunked'>('sse')
   const [concurrency, setConcurrency] = useState(64)
   const [total, setTotal] = useState(256)
@@ -349,6 +350,7 @@ function BenchPanel() {
 
 
   const [cliStatus, setCliStatus] = useState<string>('')
+  const [cliLogs, setCliLogs] = useState<string[]>([])
 
   function toggleModeInSuite(m:string){
     setModesSuite(prev=> prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m])
@@ -372,7 +374,7 @@ function BenchPanel() {
       if (!j.ok){ setCliStatus('CLI run failed to start: '+(j.error||'unknown')); return }
       setCliPid(j.pid)
       setCliStatus('running (pid '+j.pid+')...')
-      setCliSamples([]); setCliLinks({})
+      setCliSamples([]); setCliLinks({}); setCliLogs([])
       if (cliES.current) { try{ cliES.current.close() }catch{}; cliES.current = null }
       const pid = j.pid
       const es = new EventSource('/bench/run-cli/stream?pid='+pid)
@@ -382,6 +384,9 @@ function BenchPanel() {
       })
       es.addEventListener('sample', (ev:any)=>{
         try{ const d = JSON.parse(ev.data); setCliSamples(prev=>{ const arr = prev.concat({t:d.t,cpu:d.cpu,rssMb:d.rssMb}); return arr.length>240?arr.slice(-240):arr }) }catch{}
+      })
+      es.addEventListener('log', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); const line = (d?.text ?? String(ev.data)) + '\n'; setCliLogs(prev=>{ const arr = prev.concat(line); return arr.length>200?arr.slice(-200):arr }) }catch{ setCliLogs(prev=>{ const arr = prev.concat(String(ev.data)+'\n'); return arr.length>200?arr.slice(-200):arr }) }
       })
       es.addEventListener('done', (ev:any)=>{
         try{ const d = JSON.parse(ev.data); const log = String(d.log||'').replace(/^packages[\\\/]bench[\\/]results[\\\/]/,'/results/'); setCliLinks({ log, index: String(d.index||'/results/index.html') }); setCliStatus(`done (status: ${d.status})`) }catch{}
@@ -423,6 +428,9 @@ function BenchPanel() {
           <label><input type="checkbox" checked={modesSuite.includes('micro-chunked')} onChange={()=>toggleModeInSuite('micro-chunked')} /> Micro chunked</label>
         </div>
 
+
+        <div style={{ flexBasis:'100%', height:8 }} />
+
           <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
         {cliSamples.length>0 && (()=>{ const last = cliSamples[cliSamples.length-1]; const cpu=Number(last.cpu||0).toFixed(1); const rss=Number(last.rssMb||0).toFixed(1); return (<div style={{ fontFamily:'monospace' }}>Live: CPU {cpu}% | RSS {rss} MB | samples {cliSamples.length}</div>) })()}
         {(cliLinks.index || cliLinks.log) && (
@@ -431,14 +439,25 @@ function BenchPanel() {
             {cliLinks.log && <a href={cliLinks.log} target="_blank" rel="noreferrer">Open log</a>}
           </div>
         )}
+        {cliLogs.length>0 && (
+          <pre style={{ maxHeight:160, overflow:'auto', background:'#111', color:'#0f0', padding:8 }}>
+            {cliLogs.slice(-40).join('')}
+          </pre>
+        )}
+
+        <div style={{ flexBasis:'100%', height:8 }} />
 
         </>)}
         <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
         <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running}>Preset: Max (64..4096)</button>
+        <div style={{ flexBasis:'100%', height:8 }} />
+
         <label>Apex p95 max ms <input type="number" value={apexTtftP95Max} onChange={e=>setApexTtftP95Max(Number(e.target.value))} style={{ width:110 }} /></label>
         <label>Start conc <input type="number" value={apexStart} onChange={e=>setApexStart(Number(e.target.value))} style={{ width:90 }} /></label>
         <label>Max conc <input type="number" value={apexMax} onChange={e=>setApexMax(Number(e.target.value))} style={{ width:110 }} /></label>
         <button onClick={runBinarySearch} disabled={running} title="Find maximum sustainable concurrency under ttft p95 threshold">Binary search for apex</button>
+        <div style={{ flexBasis:'100%', height:8 }} />
+
 
 
         {mode!=='sse' && (
