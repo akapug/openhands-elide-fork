@@ -23,6 +23,21 @@ const CLI_RUNS = new Map<number, { logPath: string, status: 'running'|'done'|'er
 const CLI_SUBS = new Map<number, Set<any>>()
 const CLI_SAMPLERS = new Map<number, { timer: NodeJS.Timeout, last?: { cpuSeconds: number, rssBytes: number }, lastAt?: number }>()
 
+
+const LOG_SUBS = new Set<any>()
+function broadcastLog(level: string, text: string){
+  for (const res of LOG_SUBS) sseWrite(res, 'log', { level, text })
+}
+function fmtArg(a:any){
+  if (typeof a === 'string') return a
+  if (a && a.stack) return String(a.stack)
+  try { return JSON.stringify(a) } catch { return String(a) }
+}
+const _origError = console.error.bind(console)
+console.error = (...args: any[]) => { try{ broadcastLog('err', args.map(fmtArg).join(' ')) }catch{}; _origError(...args) }
+process.on('uncaughtException', (e:any)=>{ try{ broadcastLog('err', (e?.stack||String(e))) }catch{} })
+process.on('unhandledRejection', (r:any)=>{ try{ broadcastLog('err', (r?.stack||String(r))) }catch{} })
+
 function sseWrite(res:any, type:string, data:any){
   try{
     res.write(`event: ${type}\n`)
@@ -320,7 +335,36 @@ async function tryServeStatic(req: any, res: any): Promise<boolean> {
 }
 
 const server = createServer(async (req, res) => {
+  {
+    const u = req.url || '/'
+    if (u.startsWith('/logs/stream')) {
+      res.writeHead(200, {
+        'content-type':'text/event-stream', 'cache-control':'no-cache', 'connection':'keep-alive', 'access-control-allow-origin':'*'
+      })
+      res.write(': connected\n\n')
+      LOG_SUBS.add(res)
+      req.on('close', ()=>{ try{ LOG_SUBS.delete(res) }catch{} })
+      return
+    }
+  }
+
   const url = req.url || "/";
+  if (url.startsWith('/bench/run-cli/stream')) {
+    const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
+    const pid = Number(q.get('pid')||'0')
+    res.writeHead(200, {
+      'content-type':'text/event-stream', 'cache-control':'no-cache', 'connection':'keep-alive', 'access-control-allow-origin':'*'
+    })
+    res.write(': connected\n\n')
+    let set = CLI_SUBS.get(pid)
+    if (!set) { set = new Set(); CLI_SUBS.set(pid, set) }
+    set.add(res)
+    const info = CLI_RUNS.get(pid)
+    if (info) sseWrite(res, 'status', { status: info.status, log: `packages/bench/results/${info.logPath.split(/[/\\]/).pop()}` })
+    req.on('close', ()=>{ try{ set?.delete(res) }catch{} })
+    return
+  }
+
   if (url === "/tool") {
     try {
       const chunks: Buffer[] = []

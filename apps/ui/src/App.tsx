@@ -159,6 +159,28 @@ function BenchPanel() {
 
   const [mode, setMode] = useState<'sse'|'micro-plain'|'micro-chunked'>('sse')
   const [concurrency, setConcurrency] = useState(64)
+  const [cliProgress, setCliProgress] = useState<Array<{name:string,c:number,t:number}>>([])
+
+  function Sparkline({ values, color = '#0cf' }: { values: number[], color?: string }) {
+    const w = 160, h = 40
+    if (!values || values.length < 2) return <svg width={w} height={h} />
+    const n = Math.min(values.length, 80)
+    const step = values.length / n
+    const pts: number[] = []
+    for (let i = 0; i < n; i++) pts.push(values[Math.floor(i*step)] || 0)
+    const max = Math.max(1, ...pts)
+    const path = pts.map((v, i) => {
+      const x = (i/(n-1))*w
+      const y = h - (v/max)*h
+      return `${i===0?'M':'L'}${x.toFixed(1)},${y.toFixed(1)}`
+    }).join(' ')
+    return (
+      <svg width={w} height={h} style={{ background:'#111', border:'1px solid #222' }}>
+        <path d={path} fill="none" stroke={color} strokeWidth={1.5} />
+      </svg>
+    )
+  }
+
   const [total, setTotal] = useState(256)
   const [bytes, setBytes] = useState(64)
   const [frames, setFrames] = useState(200)
@@ -348,9 +370,27 @@ function BenchPanel() {
     }
   }
 
+  const [errorsOnly, setErrorsOnly] = useState(false)
+  const [srvErrs, setSrvErrs] = useState<string[]>([])
+  const srvES = useRef<EventSource|null>(null)
+  useEffect(()=>{
+    if (srvES.current) return
+    try{
+      const es = new EventSource('/logs/stream')
+      srvES.current = es
+      es.addEventListener('log', (ev:any)=>{
+        try{
+          const d = JSON.parse(ev.data)
+          if ((d?.level||'') === 'err') setSrvErrs(prev=>{ const arr = prev.concat(String(d.text||'')); return arr.length>200?arr.slice(-200):arr })
+        }catch{}
+      })
+    }catch{}
+    return ()=>{ if (srvES.current) { try{ srvES.current.close() }catch{}; srvES.current = null } }
+  },[])
+
 
   const [cliStatus, setCliStatus] = useState<string>('')
-  const [cliLogs, setCliLogs] = useState<string[]>([])
+  const [cliLogs, setCliLogs] = useState<Array<{text:string, level?:string}>>([])
 
   function toggleModeInSuite(m:string){
     setModesSuite(prev=> prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m])
@@ -374,7 +414,7 @@ function BenchPanel() {
       if (!j.ok){ setCliStatus('CLI run failed to start: '+(j.error||'unknown')); return }
       setCliPid(j.pid)
       setCliStatus('running (pid '+j.pid+')...')
-      setCliSamples([]); setCliLinks({}); setCliLogs([])
+      setCliSamples([]); setCliLinks({}); setCliLogs([]); setCliProgress([])
       if (cliES.current) { try{ cliES.current.close() }catch{}; cliES.current = null }
       const pid = j.pid
       const es = new EventSource('/bench/run-cli/stream?pid='+pid)
@@ -386,7 +426,21 @@ function BenchPanel() {
         try{ const d = JSON.parse(ev.data); setCliSamples(prev=>{ const arr = prev.concat({t:d.t,cpu:d.cpu,rssMb:d.rssMb}); return arr.length>240?arr.slice(-240):arr }) }catch{}
       })
       es.addEventListener('log', (ev:any)=>{
-        try{ const d = JSON.parse(ev.data); const line = (d?.text ?? String(ev.data)) + '\n'; setCliLogs(prev=>{ const arr = prev.concat(line); return arr.length>200?arr.slice(-200):arr }) }catch{ setCliLogs(prev=>{ const arr = prev.concat(String(ev.data)+'\n'); return arr.length>200?arr.slice(-200):arr }) }
+        const pushLog = (text:string, level?:string)=> setCliLogs(prev=>{
+          const arr = prev.concat({ text, level });
+          return arr.length>400?arr.slice(-400):arr
+        })
+        try{
+          const d = JSON.parse(ev.data); const line = (d?.text ?? String(ev.data)); const level = d?.level
+          pushLog(line, level)
+          const m = /\[(elide|express|fastapi)\][^\n]*wrote\s+bench-(?:elide|express|fastapi)\.(\d+)x(\d+)\.html/i.exec(line)
+          if (m) {
+            const name = m[1]; const c = Number(m[2]); const t = Number(m[3])
+            setCliProgress(prev => prev.find(p=>p.name===name && p.c===c && p.t===t) ? prev : prev.concat({ name, c, t }))
+          }
+        }catch{
+          pushLog(String(ev.data))
+        }
       })
       es.addEventListener('done', (ev:any)=>{
         try{ const d = JSON.parse(ev.data); const log = String(d.log||'').replace(/^packages[\\\/]bench[\\/]results[\\\/]/,'/results/'); setCliLinks({ log, index: String(d.index||'/results/index.html') }); setCliStatus(`done (status: ${d.status})`) }catch{}
@@ -401,11 +455,35 @@ function BenchPanel() {
     setCliStatus('cancel requested for pid '+cliPid)
     try{ cliES.current?.close() }catch{}
     cliES.current = null
+
   }
 
   return (
     <div style={{ border:'1px solid #eee', padding:8 }}>
       <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+
+        {cliSamples.length>2 && (
+          <div style={{ display:'flex', alignItems:'center', gap:12, margin:'4px 0' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ fontFamily:'monospace', color:'#0cf' }}>CPU</span>
+              <Sparkline values={cliSamples.map(s=>s.cpu)} color="#0cf" />
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ fontFamily:'monospace', color:'#0f0' }}>RSS</span>
+              <Sparkline values={cliSamples.map(s=>s.rssMb)} color="#0f0" />
+            </div>
+          </div>
+        )}
+        {cliProgress.length>0 && (
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6, margin:'4px 0' }}>
+            {cliProgress.map((p,i)=> (
+              <span key={i} style={{ fontFamily:'monospace', background:'#222', border:'1px solid #333', padding:'2px 6px', borderRadius:4 }}>
+                {p.name} {p.c}x{p.t}
+              </span>
+            ))}
+          </div>
+        )}
+
         <label>Target <input value={target} onChange={e=>setTarget(e.target.value)} style={{ width:220 }} /></label>
         <label>Mode
           <select value={mode} onChange={e=>setMode(e.target.value as any)}>
@@ -440,9 +518,27 @@ function BenchPanel() {
           </div>
         )}
         {cliLogs.length>0 && (
-          <pre style={{ maxHeight:160, overflow:'auto', background:'#111', color:'#0f0', padding:8 }}>
-            {cliLogs.slice(-40).join('')}
-          </pre>
+          <>
+            <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+              <b>Live log</b>
+              <label style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                <input type="checkbox" checked={errorsOnly} onChange={e=>setErrorsOnly(e.target.checked)} /> Errors only
+              </label>
+            </div>
+            <pre style={{ maxHeight:160, overflow:'auto', background:'#111', color:'#ddd', padding:8 }}>
+              {cliLogs.filter(l=>!errorsOnly || l.level==='err').slice(-100).map((l,i)=>(
+                <span key={i} style={{ color: l.level==='err' ? '#f66' : '#0f0' }}>{l.text}{'\n'}</span>
+              ))}
+            </pre>
+          </>
+        )}
+        {srvErrs.length>0 && (
+          <details style={{ marginTop:6 }} open>
+            <summary>Server errors (live)</summary>
+            <pre style={{ maxHeight:120, overflow:'auto', background:'#180f0f', color:'#f88', padding:8 }}>
+              {srvErrs.slice(-60).join('\n')}
+            </pre>
+          </details>
         )}
 
         <div style={{ flexBasis:'100%', height:8 }} />

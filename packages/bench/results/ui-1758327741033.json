@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "target": "http://localhost:8080",
+    "type": "binary_search",
+    "mode": "sse",
+    "threshold": 150,
+    "ts": 1758327741032
+  },
+  "trials": [
+    {
+      "mode": "sse",
+      "concurrency": 32,
+      "total": 128,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 128,
+        "rps": 6.87,
+        "ttft_p50": 3096.5,
+        "ttft_p95": 3114.1,
+        "ttft_p99": 3120.3,
+        "dur_p50": 15473.9,
+        "dur_p95": 18560.4,
+        "dur_p99": 18596
+      }
+    },
+    {
+      "mode": "sse",
+      "concurrency": 16,
+      "total": 64,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 64,
+        "rps": 6.85,
+        "ttft_p50": 3107.6,
+        "ttft_p95": 3115.1,
+        "ttft_p99": 3117.2,
+        "dur_p50": 9320.4,
+        "dur_p95": 9330.9,
+        "dur_p99": 9337.8
+      }
+    },
+    {
+      "mode": "sse",
+      "concurrency": 8,
+      "total": 32,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 32,
+        "rps": 5.16,
+        "ttft_p50": 3096,
+        "ttft_p95": 3108.3,
+        "ttft_p99": 3108.3,
+        "dur_p50": 3112.2,
+        "dur_p95": 6191.6,
+        "dur_p99": 6199.4
+      }
+    },
+    {
+      "mode": "sse",
+      "concurrency": 4,
+      "total": 16,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 16,
+        "rps": 5.13,
+        "ttft_p50": 3102.1,
+        "ttft_p95": 3115.8,
+        "ttft_p99": 3115.8,
+        "dur_p50": 3105.2,
+        "dur_p95": 3118.6,
+        "dur_p99": 3118.6
+      }
+    },
+    {
+      "mode": "sse",
+      "concurrency": 2,
+      "total": 8,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 8,
+        "rps": 2.56,
+        "ttft_p50": 3111.1,
+        "ttft_p95": 3118.2,
+        "ttft_p99": 3118.2,
+        "dur_p50": 3113.8,
+        "dur_p95": 3123.3,
+        "dur_p99": 3123.3
+      }
+    },
+    {
+      "mode": "sse",
+      "concurrency": 1,
+      "total": 4,
+      "bytes": 64,
+      "frames": 200,
+      "delay_ms": 5,
+      "fanout": 0,
+      "cpu_spin_ms": 0,
+      "gzip": true,
+      "summary": {
+        "count": 4,
+        "rps": 1.29,
+        "ttft_p50": 3099.6,
+        "ttft_p95": 3105.5,
+        "ttft_p99": 3105.5,
+        "dur_p50": 3101.8,
+        "dur_p95": 3108.5,
+        "dur_p99": 3108.5
+      }
+    }
+  ]
+}
