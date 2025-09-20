@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process'
 import { writeFileSync, mkdirSync } from 'node:fs'
-import { resolve as resolvePath } from 'node:path'
+import { resolve as resolvePath, dirname as pathDirname } from 'node:path'
 
 function resultsDir() { return repoRoot() + '/packages/bench/results' }
+const RUN_ID = process.env.TRIO_RUN_ID || new Date().toISOString().replace(/[:.]/g,'-')
+const RUN_REL = `runs/${RUN_ID}`
 function writeFail(out: string, name: string, err: any) {
   try {
-    mkdirSync(resultsDir(), { recursive: true })
     const p = resolvePath(resultsDir(), out)
+    mkdirSync(pathDirname(p), { recursive: true })
     const msg = typeof err === 'string' ? err : (err?.stack || err?.message || String(err))
     const html = `<!doctype html><meta charset="utf-8"/><title>FAILED ${name}</title><pre>${escapeHtml(msg)}</pre>`
     writeFileSync(p, html)
@@ -184,9 +186,9 @@ async function main() {
         const envElide = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), LLM_MODEL: 'synthetic', SAMPLING_PID: String(elide.pid || ''), SYN_FANOUT_MODE: 'inproc' }
         const envExpress = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(express.pid || ''), SYN_FANOUT_HTTP: '1' }
         const envFastapi = { ...baseEnv, TRIO_CONCURRENCY: String(tier.c), TRIO_TOTAL: String(tier.t), SAMPLING_PID: String(fastapi.pid || ''), SYN_FANOUT_HTTP: '1' }
-        const outE = `bench-elide.${tier.c}x${tier.t}.html`
-        const outX = `bench-express.${tier.c}x${tier.t}.html`
-        const outF = `bench-fastapi.${tier.c}x${tier.t}.html`
+        const outE = `${RUN_REL}/bench-elide.${tier.c}x${tier.t}.html`
+        const outX = `${RUN_REL}/bench-express.${tier.c}x${tier.t}.html`
+        const outF = `${RUN_REL}/bench-fastapi.${tier.c}x${tier.t}.html`
         if (sequential) {
           try { await runSweep('elide','http://localhost:8080', outE, envElide) } catch (e) { writeFail(outE,'elide',e) }
           try { await runSweep('express','http://localhost:8081', outX, envExpress) } catch (e) { writeFail(outX,'express',e) }
@@ -203,6 +205,8 @@ async function main() {
         }
       }
 
+      // ensure run directory exists
+      mkdirSync(resolvePath(resultsDir(), RUN_REL), { recursive: true })
       for (const tier of tiers) {
         await runForTier(tier)
       }
@@ -216,10 +220,12 @@ async function main() {
 
   // Default: just run against already-running servers
   const tier = parseTiers()[0]
+  // ensure run directory exists
+  mkdirSync(resolvePath(resultsDir(), RUN_REL), { recursive: true })
   await Promise.all([
-    runSweep('elide', 'http://localhost:8080', `bench-elide.${tier.c}x${tier.t}.html`, { LLM_MODEL: 'synthetic' }),
-    runSweep('express', 'http://localhost:8081', `bench-express.${tier.c}x${tier.t}.html`),
-    runSweep('fastapi', 'http://localhost:8082', `bench-fastapi.${tier.c}x${tier.t}.html`),
+    runSweep('elide', 'http://localhost:8080', `${RUN_REL}/bench-elide.${tier.c}x${tier.t}.html`, { LLM_MODEL: 'synthetic' }),
+    runSweep('express', 'http://localhost:8081', `${RUN_REL}/bench-express.${tier.c}x${tier.t}.html`),
+    runSweep('fastapi', 'http://localhost:8082', `${RUN_REL}/bench-fastapi.${tier.c}x${tier.t}.html`),
   ])
 }
 

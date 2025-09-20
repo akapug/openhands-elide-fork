@@ -120,6 +120,68 @@ async function main() {
     out += '</tbody></table>';
   }
 
+  // Per-run folders under results/runs/* → generate a run index and list here
+  const runsRoot = path.join(resultsDir, 'runs');
+  let runLinks = '';
+  try {
+    const names = await fs.readdir(runsRoot);
+    for (const name of names.sort()) {
+      const rp = path.join(runsRoot, name);
+      try {
+        const st = await fs.stat(rp);
+        if (!st.isDirectory()) continue;
+        const benchFiles = (await fs.readdir(rp)).filter(f=>f.startsWith('bench-') && f.endsWith('.html')).sort();
+        // Build per-run index from bench files in this folder
+        const perEntries = [];
+        for (const f of benchFiles) {
+          const html = await fs.readFile(path.join(rp, f), 'utf8');
+          const metrics = parseMetrics(html);
+          const meta = labelFromFilename(f);
+          perEntries.push({ file: f, ...meta, ...metrics });
+        }
+        // group by scenario
+        const perScenarios = new Map();
+        for (const e of perEntries) {
+          const key = `${e.concurrency}x${e.total}`;
+          if (!perScenarios.has(key)) perScenarios.set(key, []);
+          perScenarios.get(key).push(e);
+        }
+        const keys = Array.from(perScenarios.keys()).sort((a,b)=>{
+          const [ac,at]=a.split('x').map(Number); const [bc,bt]=b.split('x').map(Number); return ac-bc || at-bt;
+        });
+        let perHtml = '<!doctype html><meta charset="utf-8"/><title>Bench Run '+htmlEscape(name)+'</title>'+
+                      '<style>body{font:14px system-ui,Segoe UI,Arial} table{border-collapse:collapse;margin:12px 0} td,th{border:1px solid #ddd;padding:6px} h2{margin-top:20px}</style>'+
+                      `<h2>Bench Run ${htmlEscape(name)}</h2>`+
+                      '<div class="sub">Per-run reports grouped by scenario. Click a file to open.</div>';
+        for (const key of keys) {
+          const rows = perScenarios.get(key);
+          rows.sort((a,b)=>{ const pri={elide:0,express:1,fastapi:2}; return (pri[a.server]??9)-(pri[b.server]??9); });
+          perHtml += `<h3>Scenario ${htmlEscape(key)}</h3>`;
+          perHtml += '<table><thead><tr>'+
+                     '<th>server</th><th>file</th><th>rps</th><th>ttft_p50</th><th>ttft_p95</th><th>ttft_p99</th><th>dur_p95</th>'+
+                     '</tr></thead><tbody>';
+          for (const r of rows) {
+            perHtml += '<tr>'+
+              `<td>${htmlEscape(r.server)}</td>`+
+              `<td><a href="${encodeURI(r.file)}">${htmlEscape(r.file)}</a></td>`+
+              `<td>${fmt(r.rps)}</td>`+
+              `<td>${fmt(r.ttft_p50)}</td>`+
+              `<td>${fmt(r.ttft_p95)}</td>`+
+              `<td>${fmt(r.ttft_p99)}</td>`+
+              `<td>${fmt(r.dur_p95)}</td>`+
+              '</tr>';
+          }
+          perHtml += '</tbody></table>';
+        }
+        await fs.writeFile(path.join(rp, 'index.html'), perHtml);
+        runLinks += `\n<tr><td><a href="runs/${encodeURI(name)}/index.html">${htmlEscape(name)}</a></td><td>${benchFiles.length}</td></tr>`;
+      } catch {}
+    }
+  } catch {}
+  if (runLinks) {
+    out += '<h2>Runs</h2><table><thead><tr><th>run</th><th># files</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
+  }
+
   if (uiRuns.length) {
     out += '<h2>UI runs (from browser)</h2>';
     for (const ur of uiRuns) {
@@ -153,7 +215,6 @@ async function main() {
       out += '</tbody></table>';
     }
   }
-
 
   const outPath = path.join(resultsDir, 'index.html');
   await fs.writeFile(outPath, out);

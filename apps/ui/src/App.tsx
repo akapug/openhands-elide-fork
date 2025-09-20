@@ -484,32 +484,32 @@ function BenchPanel() {
           </div>
         )}
 
-        <label>Target <input value={target} onChange={e=>setTarget(e.target.value)} style={{ width:220 }} /></label>
-        <label>Mode
-          <select value={mode} onChange={e=>setMode(e.target.value as any)}>
+        <label title="Base URL under test (Elide/Express/FastAPI)">Target <input value={target} onChange={e=>setTarget(e.target.value)} style={{ width:220 }} title="Example: http://localhost:8080" /></label>
+        <label title="Select benchmark type: synthetic SSE stream or micro HTTP tests">Mode
+          <select value={mode} onChange={e=>setMode(e.target.value as any)} title="SSE synthetic isolates serving; Micro tests exercise plain/chunked HTTP">
             <option value="sse">SSE synthetic</option>
             <option value="micro-plain">Micro plain</option>
             <option value="micro-chunked">Micro chunked</option>
           </select>
         </label>
-        <label>Concurrency <input type="number" value={concurrency} onChange={e=>setConcurrency(Number(e.target.value))} style={{ width:90 }} /></label>
-        <label>Total <input type="number" value={total} onChange={e=>setTotal(Number(e.target.value))} style={{ width:90 }} /></label>
-        <label>Bytes <input type="number" value={bytes} onChange={e=>setBytes(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label title="Concurrent workers (open connections)">Concurrency <input type="number" value={concurrency} onChange={e=>setConcurrency(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label title="Total requests across all workers">Total <input type="number" value={total} onChange={e=>setTotal(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label title="Payload per frame (SSE) or per chunk (micro)">Bytes <input type="number" value={bytes} onChange={e=>setBytes(Number(e.target.value))} style={{ width:90 }} /></label>
         {mode==='sse' && (<>
-          <label>Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
-          <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
-          <label>Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
-        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <label title="Number of SSE frames to stream">Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
+          <label title="Delay between frames (ms)">Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
+          <label title="Simulated tool/RAG calls before streaming">Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }} title="Include additional modes in the full suite">
           <span>Suite modes:</span>
-          <label><input type="checkbox" checked={modesSuite.includes('sse')} onChange={()=>toggleModeInSuite('sse')} /> SSE</label>
-          <label><input type="checkbox" checked={modesSuite.includes('micro-plain')} onChange={()=>toggleModeInSuite('micro-plain')} /> Micro plain</label>
-          <label><input type="checkbox" checked={modesSuite.includes('micro-chunked')} onChange={()=>toggleModeInSuite('micro-chunked')} /> Micro chunked</label>
+          <label title="Include SSE synthetic in the suite"><input type="checkbox" checked={modesSuite.includes('sse')} onChange={()=>toggleModeInSuite('sse')} /> SSE</label>
+          <label title="Include HTTP plain responses in the suite"><input type="checkbox" checked={modesSuite.includes('micro-plain')} onChange={()=>toggleModeInSuite('micro-plain')} /> Micro plain</label>
+          <label title="Include HTTP chunked responses in the suite"><input type="checkbox" checked={modesSuite.includes('micro-chunked')} onChange={()=>toggleModeInSuite('micro-chunked')} /> Micro chunked</label>
         </div>
 
 
         <div style={{ flexBasis:'100%', height:8 }} />
 
-          <label>CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
+          <label title="Simulate CPU work per frame/request">CPU spin ms <input type="number" value={cpuSpinMs} onChange={e=>setCpuSpinMs(Number(e.target.value))} style={{ width:110 }} /></label>
         {cliSamples.length>0 && (()=>{ const last = cliSamples[cliSamples.length-1]; const cpu=Number(last.cpu||0).toFixed(1); const rss=Number(last.rssMb||0).toFixed(1); return (<div style={{ fontFamily:'monospace' }}>Live: CPU {cpu}% | RSS {rss} MB | samples {cliSamples.length}</div>) })()}
         {(cliLinks.index || cliLinks.log) && (
           <div style={{ display:'flex', gap:8 }}>
@@ -544,13 +544,13 @@ function BenchPanel() {
         <div style={{ flexBasis:'100%', height:8 }} />
 
         </>)}
-        <label>Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
-        <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running}>Preset: Max (64..4096)</button>
+        <label title="Comma-separated tiers used by the CLI trio run">Concurrency tiers (CSV) <input value={customConc} onChange={e=>setCustomConc(e.target.value)} style={{ width:320 }} placeholder="e.g. 8,32,64,128,256,512,1024,2048,4096" /></label>
+        <button onClick={()=>setCustomConc('64,128,256,512,1024,2048,4096')} disabled={running} title="Fill tiers with a high-end preset">Preset: Max (64..4096)</button>
         <div style={{ flexBasis:'100%', height:8 }} />
 
-        <label>Apex p95 max ms <input type="number" value={apexTtftP95Max} onChange={e=>setApexTtftP95Max(Number(e.target.value))} style={{ width:110 }} /></label>
-        <label>Start conc <input type="number" value={apexStart} onChange={e=>setApexStart(Number(e.target.value))} style={{ width:90 }} /></label>
-        <label>Max conc <input type="number" value={apexMax} onChange={e=>setApexMax(Number(e.target.value))} style={{ width:110 }} /></label>
+        <label title="Binary search threshold: acceptable TTFT p95 (ms)">Apex p95 max ms <input type="number" value={apexTtftP95Max} onChange={e=>setApexTtftP95Max(Number(e.target.value))} style={{ width:110 }} /></label>
+        <label title="Binary search starting concurrency">Start conc <input type="number" value={apexStart} onChange={e=>setApexStart(Number(e.target.value))} style={{ width:90 }} /></label>
+        <label title="Upper bound for binary search">Max conc <input type="number" value={apexMax} onChange={e=>setApexMax(Number(e.target.value))} style={{ width:110 }} /></label>
         <button onClick={runBinarySearch} disabled={running} title="Find maximum sustainable concurrency under ttft p95 threshold">Binary search for apex</button>
         <div style={{ flexBasis:'100%', height:8 }} />
 
@@ -560,11 +560,11 @@ function BenchPanel() {
 
           <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
         )}
-        <label><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
-        <button onClick={runBench} disabled={running}>{running?'Running...':'Run'}</button>
-        <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results/index.html via /bench/ui-save">{running?'Running...':'Run full sweep + save'}</button>
-        <button onClick={runCliSuite} disabled={false} title="Run bench CLI with selected tiers; auto-updates results/index.html">Run via CLI (trio)</button>
-        <button onClick={cancelCli} disabled={!cliPid}>Cancel CLI</button>
+        <label title="Enable gzip on responses/stream for added server cost"><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
+        <button onClick={runBench} disabled={running} title="Quick single run using the fields above">{running?'Running...':'Run'}</button>
+        <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results (UI)">{running?'Running...':'Run full sweep + save'}</button>
+        <button onClick={runCliSuite} disabled={false} title="Run bench CLI with selected tiers; writes per-run files under /results/runs">Run via CLI (trio)</button>
+        <button onClick={cancelCli} disabled={!cliPid} title="Send cancel to the running CLI process">Cancel CLI</button>
         {cliStatus && <span style={{ fontFamily:'monospace' }}> {cliStatus} </span>}
 
       </div>

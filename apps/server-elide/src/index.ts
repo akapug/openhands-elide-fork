@@ -462,12 +462,16 @@ const server = createServer(async (req, res) => {
       const wslNode = !!body.wslNode
       const wslFastapi = !!body.wslFastapi
       const ts = Date.now()
+      const runId = new Date(ts).toISOString().replace(/[:.]/g,'-')
+      const runRel = `runs/${runId}`
       mkdirSync(RESULTS_DIR, { recursive: true })
       const logPath = resolve(RESULTS_DIR, `cli-${ts}.log`)
       const out = createWriteStream(logPath)
       const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/trio.js')
       const env = {
         ...process.env,
+        TRIO_RUN_ID: runId,
+        TRIO_RUN_DIR: runRel,
         TRIO_START_SERVERS: startServers ? '1' : '',
         TRIO_MODE: 'sequential',
         TRIO_CONCURRENCY_LIST: concList.join(','),
@@ -517,7 +521,7 @@ const server = createServer(async (req, res) => {
         const status = code===0 ? 'done' : 'error'
         CLI_RUNS.set(pid, { logPath, status })
         const s = CLI_SAMPLERS.get(pid); if (s) { try{ clearInterval(s.timer) }catch{} CLI_SAMPLERS.delete(pid) }
-        broadcast(pid, 'done', { pid, status, log: relLog, index: '/results/index.html' })
+        broadcast(pid, 'done', { pid, status, log: relLog, index: `/results/${runRel}/index.html` })
         const subs = CLI_SUBS.get(pid)
         if (subs) { for (const r of subs) { try{ r.end() }catch{} } CLI_SUBS.delete(pid) }
       })
