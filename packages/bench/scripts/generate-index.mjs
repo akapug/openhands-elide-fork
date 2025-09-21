@@ -135,6 +135,67 @@ function generateExecutiveSummary(scenarios, insights) {
   };
 }
 
+function generateSparkline(values, width = 60, height = 20) {
+  if (!values || values.length < 2) return '';
+
+  const validValues = values.filter(v => !isNaN(v) && v > 0);
+  if (validValues.length < 2) return '';
+
+  const min = Math.min(...validValues);
+  const max = Math.max(...validValues);
+  const range = max - min;
+
+  if (range === 0) return `<span class="sparkline">━━━━━━━━</span>`;
+
+  const points = validValues.map((value, index) => {
+    const x = (index / (validValues.length - 1)) * (width - 4) + 2;
+    const y = height - 2 - ((value - min) / range) * (height - 4);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const trend = validValues[validValues.length - 1] > validValues[0] ? 'up' :
+                validValues[validValues.length - 1] < validValues[0] ? 'down' : 'stable';
+
+  return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <polyline points="${points}" fill="none" stroke="${trend === 'up' ? '#198754' : trend === 'down' ? '#dc3545' : '#6c757d'}" stroke-width="1.5"/>
+  </svg>`;
+}
+
+function identifyWinners(scenarios) {
+  const winners = new Map();
+
+  for (const [scenarioKey, rows] of scenarios) {
+    if (rows.length < 2) continue;
+
+    const metrics = ['rps', 'ttft_p50', 'ttft_p95', 'ttft_p99', 'dur_p95'];
+    const scenarioWinners = {};
+
+    for (const metric of metrics) {
+      const validRows = rows.filter(r => !isNaN(r[metric]) && r[metric] > 0);
+      if (validRows.length === 0) continue;
+
+      let winner;
+      if (metric === 'rps') {
+        // Higher is better for RPS
+        winner = validRows.reduce((best, current) =>
+          current[metric] > best[metric] ? current : best
+        );
+      } else {
+        // Lower is better for latency metrics
+        winner = validRows.reduce((best, current) =>
+          current[metric] < best[metric] ? current : best
+        );
+      }
+
+      scenarioWinners[metric] = winner.server;
+    }
+
+    winners.set(scenarioKey, scenarioWinners);
+  }
+
+  return winners;
+}
+
 async function main() {
   // Migrate any legacy root-level bench-*.html into a per-run folder
   const runsRootTop = path.join(resultsDir, 'runs');
@@ -198,6 +259,9 @@ async function main() {
   const costAnalysis = analyzer.analyzeCostEfficiency(scenarios);
   const executiveInsights = analyzer.generateExecutiveInsights(scenarios, scalingPatterns, bottlenecks, costAnalysis);
 
+  // Visual enhancements
+  const winners = identifyWinners(scenarios);
+
   let out = '';
   out += '<!doctype html><meta charset="utf-8"/>';
   out += '<title>Elide-Bench: Performance Analysis</title>';
@@ -220,6 +284,11 @@ async function main() {
     .perf-worse { color: #dc3545; font-weight: 600; }
     .perf-neutral { color: #6c757d; }
     .metric-table td:nth-child(3), .metric-table td:nth-child(4), .metric-table td:nth-child(5), .metric-table td:nth-child(6), .metric-table td:nth-child(7) { text-align: right; font-family: monospace; }
+    .winner { background: linear-gradient(90deg, #d4edda 0%, #f8f9fa 100%); border-left: 4px solid #198754; }
+    .sparkline { display: inline-block; width: 60px; height: 20px; margin-left: 8px; }
+    .trend-up { color: #198754; }
+    .trend-down { color: #dc3545; }
+    .trend-stable { color: #6c757d; }
   </style>`;
   out += '<div class="container">';
   out += '<h1>🚀 Elide-Bench: Performance Analysis</h1>';
@@ -359,10 +428,23 @@ async function main() {
     });
 
     const elide = rows.find(r => r.server === 'elide');
+    const scenarioWinners = winners.get(key) || {};
 
-    out += `<h3>Scenario ${htmlEscape(key)}</h3>`;
+    // Generate sparklines for trends (if we have historical data)
+    const rpsValues = rows.map(r => r.rps).filter(v => !isNaN(v));
+    const ttftValues = rows.map(r => r.ttft_p95).filter(v => !isNaN(v));
+
+    out += `<h3>Scenario ${htmlEscape(key)} <span style="font-size: 14px; color: #6c757d;">`;
+    if (rpsValues.length > 1) {
+      out += `RPS trend: ${generateSparkline(rpsValues)} `;
+    }
+    if (ttftValues.length > 1) {
+      out += `TTFT trend: ${generateSparkline(ttftValues)}`;
+    }
+    out += `</span></h3>`;
+
     out += '<table class="metric-table"><thead><tr>' +
-           '<th>Framework</th><th>Report</th><th>RPS</th><th>TTFT P50 (ms)</th><th>TTFT P95 (ms)</th><th>TTFT P99 (ms)</th><th>Duration P95 (ms)</th>' +
+           '<th>Framework</th><th>Report</th><th>RPS 🏆</th><th>TTFT P50 (ms) 🏆</th><th>TTFT P95 (ms) 🏆</th><th>TTFT P99 (ms) 🏆</th><th>Duration P95 (ms) 🏆</th>' +
            '</tr></thead><tbody>';
 
     for (const r of rows) {
@@ -384,17 +466,34 @@ async function main() {
         return `${fmt(value)} (${fmtPercent(diff)})`;
       };
 
-      out += '<tr>' +
+      const isWinner = (metric) => scenarioWinners[metric] === r.server;
+      const getWinnerClass = (metric) => isWinner(metric) ? 'winner' : '';
+      const getWinnerIcon = (metric) => isWinner(metric) ? ' 🏆' : '';
+
+      out += `<tr class="${getWinnerClass('rps') || getWinnerClass('ttft_p50') || getWinnerClass('ttft_p95') || getWinnerClass('ttft_p99') || getWinnerClass('dur_p95') ? 'winner' : ''}">` +
         `<td><strong>${htmlEscape(r.server)}</strong></td>` +
         `<td><a href="${encodeURI(r.file)}">${htmlEscape(r.file.replace('bench-', '').replace('.html', ''))}</a></td>` +
-        `<td class="${getComparisonClass('rps', r.rps)}">${getComparisonText('rps', r.rps)}</td>` +
-        `<td class="${getComparisonClass('ttft_p50', r.ttft_p50)}">${getComparisonText('ttft_p50', r.ttft_p50)}</td>` +
-        `<td class="${getComparisonClass('ttft_p95', r.ttft_p95)}">${getComparisonText('ttft_p95', r.ttft_p95)}</td>` +
-        `<td class="${getComparisonClass('ttft_p99', r.ttft_p99)}">${getComparisonText('ttft_p99', r.ttft_p99)}</td>` +
-        `<td class="${getComparisonClass('dur_p95', r.dur_p95)}">${getComparisonText('dur_p95', r.dur_p95)}</td>` +
+        `<td class="${getComparisonClass('rps', r.rps)}">${getComparisonText('rps', r.rps)}${getWinnerIcon('rps')}</td>` +
+        `<td class="${getComparisonClass('ttft_p50', r.ttft_p50)}">${getComparisonText('ttft_p50', r.ttft_p50)}${getWinnerIcon('ttft_p50')}</td>` +
+        `<td class="${getComparisonClass('ttft_p95', r.ttft_p95)}">${getComparisonText('ttft_p95', r.ttft_p95)}${getWinnerIcon('ttft_p95')}</td>` +
+        `<td class="${getComparisonClass('ttft_p99', r.ttft_p99)}">${getComparisonText('ttft_p99', r.ttft_p99)}${getWinnerIcon('ttft_p99')}</td>` +
+        `<td class="${getComparisonClass('dur_p95', r.dur_p95)}">${getComparisonText('dur_p95', r.dur_p95)}${getWinnerIcon('dur_p95')}</td>` +
         '</tr>';
     }
     out += '</tbody></table>';
+
+    // Add performance summary for the scenario
+    const winnerCounts = {};
+    Object.values(scenarioWinners).forEach(winner => {
+      winnerCounts[winner] = (winnerCounts[winner] || 0) + 1;
+    });
+
+    if (Object.keys(winnerCounts).length > 0) {
+      const topWinner = Object.entries(winnerCounts).sort((a, b) => b[1] - a[1])[0];
+      out += `<div style="margin: 12px 0; padding: 8px; background: linear-gradient(90deg, #d4edda 0%, #f8f9fa 100%); border-radius: 4px; font-size: 12px; border-left: 4px solid #198754;">`;
+      out += `<strong>🏆 Performance Leader:</strong> ${topWinner[0]} wins ${topWinner[1]} out of ${Object.keys(scenarioWinners).length} metrics`;
+      out += '</div>';
+    }
 
     // Add scenario-specific insights
     const scenarioInsights = insights.filter(i => i.scenario === key);
