@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { PerformanceAnalyzer } from './analysis.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,6 +191,13 @@ async function main() {
   const insights = generateComparativeAnalysis(scenarios);
   const summary = generateExecutiveSummary(scenarios, insights);
 
+  // Advanced performance analysis
+  const analyzer = new PerformanceAnalyzer();
+  const scalingPatterns = analyzer.analyzeScalingPatterns(scenarios);
+  const bottlenecks = analyzer.detectBottlenecks(scenarios);
+  const costAnalysis = analyzer.analyzeCostEfficiency(scenarios);
+  const executiveInsights = analyzer.generateExecutiveInsights(scenarios, scalingPatterns, bottlenecks, costAnalysis);
+
   let out = '';
   out += '<!doctype html><meta charset="utf-8"/>';
   out += '<title>Elide-Bench: Performance Analysis</title>';
@@ -231,12 +239,104 @@ async function main() {
   }
   out += '</div>';
 
-  // Performance Insights
-  if (insights.length > 0) {
-    out += '<h2>🔍 Performance Insights</h2>';
-    out += '<div class="sub">Automated analysis of performance differences and their likely explanations</div>';
+  // Executive Insights (Advanced Analysis)
+  if (executiveInsights.length > 0) {
+    out += '<h2>🎯 Executive Insights</h2>';
+    out += '<div class="sub">AI-powered analysis of performance patterns, scaling characteristics, and optimization opportunities</div>';
 
-    for (const insight of insights.slice(0, 10)) { // Top 10 insights
+    for (const insight of executiveInsights) {
+      const priorityClass = insight.priority === 'high' ? 'insight-high' : insight.priority === 'medium' ? 'insight-med' : 'insight-low';
+      out += `<div class="insight ${priorityClass}">`;
+      out += `<strong>${insight.title}:</strong> ${insight.description}`;
+      if (insight.recommendations) {
+        out += '<ul style="margin: 8px 0 0 20px; font-size: 12px;">';
+        for (const rec of insight.recommendations) {
+          out += `<li>${rec}</li>`;
+        }
+        out += '</ul>';
+      }
+      if (insight.details) {
+        out += `<div style="margin-top: 6px; font-size: 12px; color: #6c757d;">Affected: ${insight.details.join(', ')}</div>`;
+      }
+      out += '</div>';
+    }
+  }
+
+  // Scaling Analysis
+  if (scalingPatterns.size > 0) {
+    out += '<h2>📈 Scaling Analysis</h2>';
+    out += '<div class="sub">How each framework performs as concurrency increases</div>';
+
+    for (const [framework, pattern] of scalingPatterns) {
+      if (pattern.pattern === 'insufficient_data') continue;
+
+      const patternClass = pattern.pattern === 'degrading' ? 'insight-high' :
+                          pattern.pattern === 'super_linear' ? 'insight-low' : 'insight-med';
+
+      out += `<div class="insight ${patternClass}">`;
+      out += `<strong>${framework} (${pattern.pattern.replace('_', ' ')}):</strong> ${pattern.description}`;
+
+      if (pattern.optimalPoint) {
+        out += ` <em>Optimal concurrency: ${pattern.optimalPoint.concurrency} (${pattern.optimalPoint.rps.toFixed(1)} RPS)</em>`;
+      }
+
+      if (pattern.recommendations.length > 0) {
+        out += '<ul style="margin: 8px 0 0 20px; font-size: 12px;">';
+        for (const rec of pattern.recommendations) {
+          out += `<li>${rec}</li>`;
+        }
+        out += '</ul>';
+      }
+      out += '</div>';
+    }
+  }
+
+  // Performance Bottlenecks
+  if (bottlenecks.length > 0) {
+    out += '<h2>⚠️ Performance Bottlenecks</h2>';
+    out += '<div class="sub">Identified performance issues and optimization opportunities</div>';
+
+    for (const bottleneck of bottlenecks) {
+      for (const issue of bottleneck.issues) {
+        const severityClass = issue.severity === 'high' ? 'insight-high' :
+                             issue.severity === 'medium' ? 'insight-med' : 'insight-low';
+
+        out += `<div class="insight ${severityClass}">`;
+        out += `<strong>${bottleneck.framework} (${bottleneck.scenario}):</strong> ${issue.description}`;
+        out += `<div style="margin-top: 6px; font-size: 12px; color: #6c757d;">${issue.recommendation}</div>`;
+        out += '</div>';
+      }
+    }
+  }
+
+  // Cost Efficiency Analysis
+  if (costAnalysis.length > 0) {
+    out += '<h2>💰 Cost Efficiency Analysis</h2>';
+    out += '<div class="sub">Estimated cost per request based on typical cloud pricing</div>';
+
+    out += '<table class="metric-table"><thead><tr>';
+    out += '<th>Framework</th><th>Scenario</th><th>RPS</th><th>Cost/Request (mc)</th><th>Cost/1M Requests</th><th>Efficiency Score</th>';
+    out += '</tr></thead><tbody>';
+
+    for (const analysis of costAnalysis.slice(0, 10)) {
+      out += '<tr>';
+      out += `<td><strong>${analysis.framework}</strong></td>`;
+      out += `<td>${analysis.scenario}</td>`;
+      out += `<td>${analysis.rps.toFixed(1)}</td>`;
+      out += `<td>${analysis.costPerRequest.toFixed(3)}</td>`;
+      out += `<td>$${analysis.costPer1MRequests.toFixed(2)}</td>`;
+      out += `<td>${analysis.efficiency.toFixed(1)}</td>`;
+      out += '</tr>';
+    }
+    out += '</tbody></table>';
+  }
+
+  // Performance Insights (Original comparative analysis)
+  if (insights.length > 0) {
+    out += '<h2>🔍 Comparative Performance Insights</h2>';
+    out += '<div class="sub">Detailed analysis of performance differences and their likely explanations</div>';
+
+    for (const insight of insights.slice(0, 8)) { // Top 8 insights
       const cssClass = insight.magnitude > 50 ? 'insight-high' : insight.magnitude > 20 ? 'insight-med' : 'insight-low';
       out += `<div class="insight ${cssClass}">`;
       out += `<strong>${insight.scenario} (${insight.comparison}):</strong> ${insight.insight}`;
