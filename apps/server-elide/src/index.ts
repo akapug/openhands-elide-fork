@@ -421,6 +421,32 @@ const server = createServer(async (req, res) => {
     }
     return
   }
+  if (url === '/bench/health') {
+    try {
+      const probe = async (u: string, timeoutMs = 1500) => {
+        try {
+          const ac = new AbortController()
+          const t = setTimeout(() => ac.abort(), timeoutMs)
+          const r = await fetch(u, { signal: ac.signal })
+          clearTimeout(t)
+          return r.ok
+        } catch { return false }
+      }
+      const data = {
+        elide: true, // this server
+        express: await probe('http://localhost:8081/healthz'),
+        fastapi: await probe('http://localhost:8082/healthz'),
+        flask: await probe('http://localhost:8083/healthz'),
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, targets: data }))
+    } catch (e:any) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
+    }
+    return
+  }
+
   if (url === '/bench/ui-save' && req.method === 'POST') {
     try {
       const chunks: Buffer[] = []

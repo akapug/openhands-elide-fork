@@ -196,12 +196,12 @@ async function main() {
           perHtml += '</tbody></table>';
         }
         await fs.writeFile(path.join(rp, 'index.html'), perHtml);
-        runLinks += `\n<tr><td><a href="runs/${encodeURI(name)}/index.html">${htmlEscape(name)}</a></td><td>${benchFiles.length}</td></tr>`;
+        runLinks += `\n<tr><td><a href="runs/${encodeURI(name)}/index.html">${htmlEscape(name)}</a></td><td>${benchFiles.length}</td><td>${htmlEscape(present)}</td></tr>`;
       } catch {}
     }
   } catch {}
   if (runLinks) {
-    out += '<h2>Runs</h2><table><thead><tr><th>run</th><th># files</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
+    out += '<h2>Runs</h2><table><thead><tr><th>run</th><th># files</th><th>targets</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
   }
 
   if (latestName) {

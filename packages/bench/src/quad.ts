@@ -77,6 +77,39 @@ function killTree(pid?: number): Promise<void> {
   })
 }
 
+async function killListenersOnWindows(port: number): Promise<void> {
+  if (process.platform !== 'win32') return
+  const auto = String(process.env.QUAD_KILL_CONFLICTS || '1').toLowerCase()
+  if (!(auto === '1' || auto === 'true')) return
+  await new Promise<void>((resolve) => {
+    try {
+      const p = spawn('netstat', ['-ano'])
+      let buf = ''
+      p.stdout.on('data', d => { buf += String(d) })
+      p.on('close', () => {
+        const lines = buf.split(/\r?\n/)
+        const pids = new Set<string>()
+        for (const line of lines) {
+          if (line.includes(`:${port}`) && /LISTENING/i.test(line)) {
+            const parts = line.trim().split(/\s+/)
+            const pid = parts[parts.length - 1]
+            if (pid && /^\d+$/.test(pid) && Number(pid) !== process.pid) pids.add(pid)
+          }
+        }
+        if (!pids.size) return resolve()
+        let remaining = pids.size
+        for (const pid of pids) {
+          const k = spawn('taskkill', ['/PID', pid, '/T', '/F'], { stdio: 'ignore' })
+          const done = () => { remaining--; if (remaining <= 0) resolve() }
+          k.on('exit', done)
+          k.on('error', done)
+        }
+      })
+      p.on('error', () => resolve())
+    } catch { resolve() }
+  })
+}
+
 function repoRoot(): string {
   const cwd = process.cwd().replace(/\\/g, '/')
   if (cwd.endsWith('/elide-hands/openhands-elide-fork')) return cwd
@@ -143,6 +176,8 @@ async function main() {
   }
 
   if (startAll && targets.has('express')) {
+    // Free port 8081 proactively on Windows to avoid EADDRINUSE during local dev
+    try { await killListenersOnWindows(8081) } catch {}
     if (process.platform === 'win32' && (String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='1' || String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='true')) {
       const rootWsl = winPathToWsl(repoRoot())
       await new Promise<void>((resolve,reject)=>{

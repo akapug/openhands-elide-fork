@@ -398,6 +398,17 @@ function BenchPanel() {
   const [cliLogs, setCliLogs] = useState<Array<{text:string, level?:string}>>([])
 
 
+  const [targetsHealth, setTargetsHealth] = useState<{elide?:boolean;express?:boolean;fastapi?:boolean;flask?:boolean}|null>(null)
+  async function probeTargets(){
+    try{
+      const r = await fetch('/bench/health')
+      const j = await r.json()
+      if (j?.ok && j.targets) setTargetsHealth(j.targets)
+      else setTargetsHealth(null)
+    }catch{ setTargetsHealth(null) }
+  }
+
+
   const [targets, setTargets] = useState<{elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ elide:true, express:true, fastapi:true, flask:true })
   function toggleTarget(name: 'elide'|'express'|'fastapi'|'flask'){
     setTargets(prev => ({ ...prev, [name]: !prev[name] }))
@@ -510,12 +521,21 @@ function BenchPanel() {
         <label title="Payload per frame (SSE) or per chunk (micro)">Bytes <input type="number" value={bytes} onChange={e=>setBytes(Number(e.target.value))} style={{ width:90 }} /></label>
         {mode==='sse' && (<>
           <label title="Number of SSE frames to stream">Frames <input type="number" value={frames} onChange={e=>setFrames(Number(e.target.value))} style={{ width:90 }} /></label>
-        <div style={{ display:'flex', alignItems:'center', gap:6 }} title="Select which servers to include in the CLI suite">
+        <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }} title="Select which servers to include in the CLI suite">
           <span>Targets:</span>
-          <label><input type="checkbox" checked={targets.elide} onChange={()=>toggleTarget('elide')} /> Elide</label>
-          <label><input type="checkbox" checked={targets.express} onChange={()=>toggleTarget('express')} /> Express</label>
-          <label><input type="checkbox" checked={targets.fastapi} onChange={()=>toggleTarget('fastapi')} /> FastAPI</label>
-          <label><input type="checkbox" checked={targets.flask} onChange={()=>toggleTarget('flask')} /> Flask</label>
+          <label title={`health: ${targetsHealth?.elide===true?'up':targetsHealth?.elide===false?'down':'?'}`}>
+            <input type="checkbox" checked={targets.elide} onChange={()=>toggleTarget('elide')} /> Elide {targetsHealth ? (targetsHealth.elide ? '🟢':'🔴') : ''}
+          </label>
+          <label title={`health: ${targetsHealth?.express===true?'up':targetsHealth?.express===false?'down':'?'}`}>
+            <input type="checkbox" checked={targets.express} onChange={()=>toggleTarget('express')} /> Express {targetsHealth ? (targetsHealth.express ? '🟢':'🔴') : ''}
+          </label>
+          <label title={`health: ${targetsHealth?.fastapi===true?'up':targetsHealth?.fastapi===false?'down':'?'}`}>
+            <input type="checkbox" checked={targets.fastapi} onChange={()=>toggleTarget('fastapi')} /> FastAPI {targetsHealth ? (targetsHealth.fastapi ? '🟢':'🔴') : ''}
+          </label>
+          <label title={`health: ${targetsHealth?.flask===true?'up':targetsHealth?.flask===false?'down':'?'}`}>
+            <input type="checkbox" checked={targets.flask} onChange={()=>toggleTarget('flask')} /> Flask {targetsHealth ? (targetsHealth.flask ? '🟢':'🔴') : ''}
+          </label>
+          <button onClick={probeTargets} style={{ marginLeft:8 }}>Probe targets</button>
         </div>
 
           <label title="Delay between frames (ms)">Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
