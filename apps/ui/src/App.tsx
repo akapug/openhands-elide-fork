@@ -399,14 +399,21 @@ function BenchPanel() {
 
 
   const [targetsHealth, setTargetsHealth] = useState<{elide?:boolean;express?:boolean;fastapi?:boolean;flask?:boolean}|null>(null)
+  const [dockerAvail, setDockerAvail] = useState<boolean|null>(null)
+  const [probingTargets, setProbingTargets] = useState(false)
   async function probeTargets(){
     try{
+      setProbingTargets(true)
       const r = await fetch('/bench/health')
       const j = await r.json()
       if (j?.ok && j.targets) setTargetsHealth(j.targets)
       else setTargetsHealth(null)
-    }catch{ setTargetsHealth(null) }
+      setDockerAvail(j?.tools?.docker===true)
+    }catch{ setTargetsHealth(null); setDockerAvail(null) }
+    finally { setProbingTargets(false) }
   }
+
+  useEffect(()=>{ probeTargets().catch(()=>{}) },[])
 
 
   const [targets, setTargets] = useState<{elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ elide:true, express:true, fastapi:true, flask:true })
@@ -535,8 +542,20 @@ function BenchPanel() {
           <label title={`health: ${targetsHealth?.flask===true?'up':targetsHealth?.flask===false?'down':'?'}`}>
             <input type="checkbox" checked={targets.flask} onChange={()=>toggleTarget('flask')} /> Flask {targetsHealth ? (targetsHealth.flask ? '🟢':'🔴') : ''}
           </label>
-          <button onClick={probeTargets} style={{ marginLeft:8 }}>Probe targets</button>
+          <button onClick={probeTargets} disabled={probingTargets} style={{ marginLeft:8 }}>{probingTargets ? 'Probing…' : 'Probe targets'}</button>
         </div>
+
+        {targetsHealth && (
+          <div style={{ fontSize:12, color:'#666' }}>
+            Legend: 🟢 up, 🔴 down. Auto-probes on load; click again to refresh.
+        {dockerAvail===false && (
+          <div style={{ color:'#a33', fontSize:12 }}>
+            Docker not detected; Flask target will not start. Start Docker Desktop to include Flask in suite runs.
+          </div>
+        )}
+
+          </div>
+        )}
 
           <label title="Delay between frames (ms)">Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
           <label title="Simulated tool/RAG calls before streaming">Fanout <input type="number" value={fanout} onChange={e=>setFanout(Number(e.target.value))} style={{ width:90 }} /></label>
@@ -601,6 +620,10 @@ function BenchPanel() {
 
           <label>Delay ms <input type="number" value={delayMs} onChange={e=>setDelayMs(Number(e.target.value))} style={{ width:90 }} /></label>
         )}
+        <div style={{ fontSize:12, color:'#666', marginTop:6 }}>
+          Tips: <b>Run</b> = single quick test using fields above. <b>Run full sweep + save</b> = preset multi-tier sweep saved under Results (UI). <b>Run via CLI (suite)</b> = orchestrates selected targets/modes; starts servers if needed; writes per-run results under Results → Runs.
+        </div>
+
         <label title="Enable gzip on responses/stream for added server cost"><input type="checkbox" checked={gzip} onChange={e=>setGzip(e.target.checked)} /> gzip</label>
         <button onClick={runBench} disabled={running} title="Quick single run using the fields above">{running?'Running...':'Run'}</button>
         <button onClick={runFullSuite} disabled={running} title="Runs 8x64, 32x128, 64x256, 128x512 and saves to results (UI)">{running?'Running...':'Run full sweep + save'}</button>

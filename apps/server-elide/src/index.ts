@@ -432,6 +432,15 @@ const server = createServer(async (req, res) => {
           return r.ok
         } catch { return false }
       }
+      const dockerAvailable = await new Promise<boolean>((resolve) => {
+        const bin = process.platform === 'win32' ? 'docker.exe' : 'docker'
+        try {
+          const p = spawn(bin, ['version'], { stdio: ['ignore', 'ignore', 'ignore'] })
+          const to = setTimeout(() => { try { p.kill() } catch {} ; resolve(false) }, 1500)
+          p.on('exit', (c:number)=> { clearTimeout(to); resolve(c===0) })
+          p.on('error', ()=> { clearTimeout(to); resolve(false) })
+        } catch { resolve(false) }
+      })
       const data = {
         elide: true, // this server
         express: await probe('http://localhost:8081/healthz'),
@@ -439,7 +448,7 @@ const server = createServer(async (req, res) => {
         flask: await probe('http://localhost:8083/healthz'),
       }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, targets: data }))
+      res.end(JSON.stringify({ ok: true, targets: data, tools: { docker: dockerAvailable } }))
     } catch (e:any) {
       res.writeHead(500, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok:false, error: e?.message || String(e) }))
