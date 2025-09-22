@@ -15,7 +15,7 @@ A ready‑to‑run fork of OpenHands using Elide as the primary runtime and HTTP
 ```
 pnpm i -w
 ```
-2) Dev mode (recommended): starts Elide server + Vite UI at http://localhost:8080
+2) Dev mode (recommended): starts Elide server + Vite UI (open http://localhost:5173)
 ```
 pnpm dev
 ```
