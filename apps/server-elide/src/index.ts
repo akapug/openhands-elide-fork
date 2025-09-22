@@ -314,6 +314,11 @@ async function tryServeStatic(req: any, res: any): Promise<boolean> {
         return true
       }
     }
+    // Never intercept API routes like /bench/* when serving static UI
+    if (p.startsWith('/bench/')) {
+      return false
+    }
+
     if (p === '/' || p === '') p = '/index.html'
     const fsPath = resolve(UI_DIST_DIR, '.' + p)
     if (existsSync(fsPath) && statSync(fsPath).isFile()) {

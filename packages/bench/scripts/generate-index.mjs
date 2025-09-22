@@ -225,6 +225,29 @@ async function main() {
     entries.push({ file: f, ...meta, ...metrics, concurrency: conc, total });
   }
 
+  // Also include per-run reports under results/runs/*/bench-*.html
+  try {
+    const runsRoot = path.join(resultsDir, 'runs');
+    const runDirs = await fs.readdir(runsRoot);
+    for (const name of runDirs) {
+      const rp = path.join(runsRoot, name);
+      try {
+        const st = await fs.stat(rp); if (!st.isDirectory()) continue;
+        const benchFiles = (await fs.readdir(rp)).filter(f => f.startsWith('bench-') && f.endsWith('.html'));
+        for (const bf of benchFiles) {
+          try {
+            const html = await fs.readFile(path.join(rp, bf), 'utf8');
+            const metrics = parseMetrics(html);
+            const meta = labelFromFilename(bf);
+            const conc = Number.isFinite(metrics.concurrency) ? metrics.concurrency : meta.conc;
+            const total = Number.isFinite(metrics.total) ? metrics.total : meta.total;
+            entries.push({ file: `runs/${name}/${bf}`, ...meta, ...metrics, concurrency: conc, total });
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
   const uiRuns = [];
   for (const f of uiFiles) {
     try {

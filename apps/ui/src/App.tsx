@@ -16,6 +16,13 @@ const defaultSettings: Settings = {
   runtime: 'elide',
 }
 
+class ErrorBoundary extends React.Component<{children:any}, {hasError:boolean}> {
+  constructor(props:any){ super(props); this.state = { hasError:false } }
+  static getDerivedStateFromError(){ return { hasError:true } }
+  componentDidCatch(err:any){ console.error('UI error:', err) }
+  render(){ return this.state.hasError ? (<div style={{ padding:12, border:'1px solid #f5c2c7', background:'#f8d7da', borderRadius:6 }}>Something went wrong in this panel. Please check logs.</div>) : this.props.children }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'streaming'|'http'|'concurrency'|'comparative'|'results'|'chat'>('streaming')
   const [settings, setSettings] = useState<Settings>(() => {
@@ -119,38 +126,21 @@ export default function App() {
         <button onClick={()=>localStorage.removeItem('settings')}>Reset</button>
       </aside>
       <main style={{ padding:12 }}>
-        <h2>OpenHands–Elide</h2>
+        <h2>Elide-Bench</h2>
         <div style={{ display:'flex', gap:12, alignItems:'center', margin:'4px 0' }}>
           <a href="/results/index.html" target="_blank" rel="noreferrer">Results index</a>
           <a href="/metrics" target="_blank" rel="noreferrer">Metrics</a>
         </div>
 
-        <div style={{ marginBottom:12 }}>
-          <textarea ref={taRef} rows={4} style={{ width:'100%' }} value={input} onChange={e=>setInput(e.target.value)} />
-          <button onClick={send} disabled={streaming}>Send</button>
-        </div>
-        <div style={{ height:'40vh', overflow:'auto', border:'1px solid #eee', padding:8 }}>
-          {messages.map((m,i)=> (
-            <div key={i} style={{ whiteSpace:'pre-wrap', margin:'8px 0' }}>
-              <b>{m.role}:</b> {m.content}
-            </div>
-          ))}
-        </div>
-        {showReasoning && (
-          <div style={{ marginTop:8, padding:8, border:'1px dashed #ddd', background:'#fafafa', whiteSpace:'pre-wrap' }}>
-            <b>Reasoning:</b> {reasoning}
-          </div>
-        )}
-
-        <hr style={{ margin:'16px 0' }} />
-        <h3>Bench (local :8080)</h3>
-        <BenchPanel />
+        <ErrorBoundary>
+          <BenchPanel activeTab={activeTab} setActiveTab={setActiveTab} settings={settings} />
+        </ErrorBoundary>
       </main>
     </div>
   )
 }
 
-function BenchPanel() {
+function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   const [target, setTarget] = useState('http://localhost:8080')
   const [modesSuite, setModesSuite] = useState<string[]>(['sse','micro-plain','micro-chunked'])
   const [concList, setConcList] = useState<number[]>([8,32,64,128])
@@ -166,6 +156,7 @@ function BenchPanel() {
   const [mode, setMode] = useState<'sse'|'micro-plain'|'micro-chunked'>('sse')
   const [concurrency, setConcurrency] = useState(64)
   const [cliProgress, setCliProgress] = useState<Array<{name:string,c:number,t:number}>>([])
+
 
   function Sparkline({ values, color = '#0cf' }: { values: number[], color?: string }) {
     const w = 160, h = 40
@@ -194,22 +185,35 @@ function BenchPanel() {
   const [fanout, setFanout] = useState(0)
   const [cpuSpinMs, setCpuSpinMs] = useState(0)
   const [gzip, setGzip] = useState(true)
+  const [liveModel, setLiveModel] = useState(false)
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState<any|null>(null)
   // Apex search settings
   const [apexTtftP95Max, setApexTtftP95Max] = useState(250)
   const [apexStart, setApexStart] = useState(32)
+  const [tiersCsv, setTiersCsv] = useState('8,32,64,128,256,512,1024,2048,4096')
+  const maxTiers = '8,32,64,128,256,512,1024,2048,4096'
+
   const [apexMax, setApexMax] = useState(8192)
 
 
   const p = (arr:number[], q:number)=>{
+
     if (!arr.length) return 0; const a=[...arr].sort((a,b)=>a-b); const i=Math.min(a.length-1, Math.max(0, Math.floor(q*(a.length-1)))); return a[i]
   }
 
   async function runOnce(): Promise<{ttft?:number, dur:number}> {
     const t0 = performance.now()
     if (mode === 'sse') {
-      const res = await fetch('/api/chat/completions', {
+      const res = liveModel ? await fetch('/api/chat/completions', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: settings.model,
+          messages: [{ role: 'user', content: 'Benchmark: please stream about 100-200 tokens about Elide.' }],
+          stream: true, max_tokens: 256, temperature: 0.2,
+          runtime: settings.runtime, baseURL: settings.baseURL, apiKey: settings.apiKey,
+        })
+      }) : await fetch('/api/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'synthetic', runtime: 'elide',
@@ -618,6 +622,12 @@ function BenchPanel() {
                 <input type="number" value={cpuSpinMs} onChange={e => setCpuSpinMs(Number(e.target.value))} style={{ width: 80 }} title="CPU spin milliseconds" />
               )}
             </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+              <label title="Use live local model via /api/chat/completions">
+                <input type="checkbox" checked={liveModel} onChange={e => setLiveModel(e.target.checked)} /> Use live local model
+              </label>
+            </div>
+
 
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
               <button onClick={runBench} disabled={running} style={{ padding: '8px 16px' }}>
