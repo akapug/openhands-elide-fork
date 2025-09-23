@@ -448,9 +448,10 @@ const server = createServer(async (req, res) => {
       })
       const data = {
         'node-raw': true, // this server
+        elide:   await probe('http://localhost:8084/healthz'),
         express: await probe('http://localhost:8081/healthz'),
         fastapi: await probe('http://localhost:8082/healthz'),
-        flask: await probe('http://localhost:8083/healthz'),
+        flask:   await probe('http://localhost:8083/healthz'),
       }
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, targets: data, tools: { docker: dockerAvailable } }))
@@ -514,18 +515,18 @@ const server = createServer(async (req, res) => {
         : ['node-raw','express','fastapi','flask']
       const env = {
         ...process.env,
-        QUAD_RUN_ID: runId,
-        QUAD_START_SERVERS: startServers ? '1' : '',
-        QUAD_MODE: 'sequential',
-        QUAD_CONCURRENCY_LIST: concList.join(','),
-        QUAD_TOTAL_LIST: totalList.join(','),
-        QUAD_WSL_NODE: wslNode ? '1' : '',
-        QUAD_WSL_FASTAPI: wslFastapi ? '1' : '',
-        QUAD_TARGETS: targetsArr.join(','),
-        QUAD_DOCKER_FLASK: '1',
-        // Optional Elide runtime wiring (feature flag)
-        QUAD_BASE_ELIDE_RT: typeof body.elideRtBase === 'string' ? body.elideRtBase : (process.env.QUAD_BASE_ELIDE_RT || ''),
-        QUAD_ELIDE_RT_CMD: typeof body.elideRtCmd === 'string' ? body.elideRtCmd : (process.env.QUAD_ELIDE_RT_CMD || ''),
+        BENCH_RUN_ID: runId,
+        BENCH_START_SERVERS: startServers ? '1' : '',
+        BENCH_MODE: 'sequential',
+        BENCH_CONCURRENCY_LIST: concList.join(','),
+        BENCH_TOTAL_LIST: totalList.join(','),
+        BENCH_WSL_NODE: wslNode ? '1' : '',
+        BENCH_WSL_FASTAPI: wslFastapi ? '1' : '',
+        BENCH_TARGETS: targetsArr.join(','),
+        BENCH_DOCKER_FLASK: '1',
+        // Optional Elide runtime wiring
+        BENCH_BASE_ELIDE: typeof body.elideRtBase === 'string' ? body.elideRtBase : (process.env.BENCH_BASE_ELIDE || ''),
+        BENCH_ELIDE_CMD: typeof body.elideRtCmd === 'string' ? body.elideRtCmd : (process.env.BENCH_ELIDE_CMD || ''),
         SYN_FRAMES: String(frames),
         SYN_DELAY_MS: String(delay_ms),
         SYN_BYTES: String(bytes),

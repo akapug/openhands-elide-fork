@@ -526,6 +526,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
           <span title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
             Node (raw) {targetsHealth ? (targetsHealth['node-raw'] ? '🟢' : '🔴') : '⚪'}
           </span>
+          <span title={`Elide (runtime): ${targetsHealth?.elide === true ? 'up' : targetsHealth?.elide === false ? 'down' : '?'}`}>
+            Elide {targetsHealth ? (targetsHealth.elide ? '🟢' : '🔴') : '⚪'}
+          </span>
           <span title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
             Express {targetsHealth ? (targetsHealth.express ? '🟢' : '🔴') : '⚪'}
           </span>
@@ -857,7 +860,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
                 {(cliLinks.index || cliLinks.log) ? (
                   <div>
                     <div style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 8 }}>
-                      {targetsHealth ? Object.values(targetsHealth).filter(Boolean).length : 0}/4
+                      {targetsHealth ? Object.values(targetsHealth).filter(Boolean).length : 0}/5
                     </div>
                     <div style={{ fontSize: 14, opacity: 0.9 }}>Frameworks Online</div>
                     <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>

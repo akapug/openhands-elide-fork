@@ -73,9 +73,10 @@ services:
     working_dir: /app
     command: ["node", "packages/bench/dist/bench.js"]
     environment:
-      - QUAD_BASE_ELIDE=http://elide:8080
-      - QUAD_BASE_EXPRESS=http://express:8081
-      - QUAD_BASE_FASTAPI=http://fastapi:8082
-      - QUAD_BASE_FLASK=http://flask:8083
+      - BENCH_BASE_NODE_RAW=http://elide:8080
+      - BENCH_BASE_EXPRESS=http://express:8081
+      - BENCH_BASE_FASTAPI=http://fastapi:8082
+      - BENCH_BASE_FLASK=http://flask:8083
+      - BENCH_BASE_ELIDE=http://elide:8084
     volumes:
       - ../packages/bench/results:/app/packages/bench/results

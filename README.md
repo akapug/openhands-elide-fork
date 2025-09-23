@@ -57,14 +57,14 @@ Notes:
   - `POST /api/chat/completions` → streaming or buffered JSON per OpenAI‑style schema
 - Fastest path (per Dario): use the Elide repo sample at `tools/scripts/server.js`.
   - Example launch: set
-    - `QUAD_BASE_ELIDE_RT=http://localhost:8084`  (runtime base URL the bench will target)
-    - `QUAD_ELIDE_RT_CMD="node ../elide/tools/scripts/server.js --port 8084"`  (authoritative sample start command)
+    - `BENCH_BASE_ELIDE=http://localhost:8084`  (runtime base URL the bench will target)
+    - `BENCH_ELIDE_CMD="node ../elide/tools/scripts/server.js --port 8084"`  (authoritative sample start command)
   - Then run the Comparative sweep with the “Elide (runtime)” option enabled in the UI.
 - The bench will start this command automatically during a run when “Start servers” is checked.
 
 
 ### Bench environment variables (aliases)
-- Prefer BENCH_* variables; QUAD_* are still accepted for compatibility
+- Use BENCH_* variables exclusively (legacy QUAD_* removed)
 - Common variables:
   - BENCH_TARGETS (e.g., node-raw,elide,express,fastapi,flask)
   - BENCH_START_SERVERS (true/false)
@@ -90,8 +90,8 @@ Notes:
   - This page lists all runs and links to each run’s index.
 
 ## Windows notes (WSL recommended)
-- FastAPI baseline can build/run inside WSL if `QUAD_WSL_FASTAPI=1`.
-- Node baselines can build/run inside WSL if `QUAD_WSL_NODE=1`.
+- FastAPI baseline can build/run inside WSL if `BENCH_WSL_FASTAPI=1`.
+- Node baselines can build/run inside WSL if `BENCH_WSL_NODE=1`.
 - Ports used: 8080 (UI + Node harness), 8081 (Express), 8082 (FastAPI), 8083 (Flask). Free them if already taken.
 
 ## Troubleshooting

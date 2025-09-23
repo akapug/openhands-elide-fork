@@ -18,7 +18,6 @@
     "bench": "pnpm -C packages/bench build && node packages/bench/dist/cli.js",
     "bench:trio": "pnpm -C packages/bench build && node packages/bench/dist/trio.js",
     "bench:bench": "pnpm -C packages/bench build && node packages/bench/dist/bench.js",
-    "bench:quad": "pnpm -C packages/bench build && node packages/bench/dist/bench.js",
     "start:all": "pnpm -C packages/bench build && node packages/bench/dist/start-all.js",
     "docker:build": "docker compose -f infra/docker-compose.yml build node-workspace fastapi flask",
     "docker:up": "docker compose -f infra/docker-compose.yml up -d elide express fastapi flask",
