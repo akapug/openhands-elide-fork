@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import { resolve as resolvePath, dirname as pathDirname } from 'node:path'
 
 function resultsDir() { return repoRoot() + '/packages/bench/results' }
-const RUN_ID = process.env.QUAD_RUN_ID || new Date().toISOString().replace(/[:.]/g,'-')
+const RUN_ID = process.env.BENCH_RUN_ID || process.env.QUAD_RUN_ID || new Date().toISOString().replace(/[:.]/g,'-')
 const RUN_REL = `runs/${RUN_ID}`
 function writeFail(out: string, name: string, err: any) {
   try {
@@ -17,10 +17,19 @@ function writeFail(out: string, name: string, err: any) {
 }
 function escapeHtml(s:string){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'} as any)[c]||c) }
 
+function envFirst(...keys: string[]): string {
+  for (const k of keys) {
+    const v = process.env[k]
+    if (v !== undefined && String(v).trim() !== '') return String(v)
+  }
+  return ''
+}
+
+
 function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<string, string> = {}) {
   return new Promise<void>((resolve, reject) => {
-    const conc = extraEnv.QUAD_CONCURRENCY || process.env.QUAD_CONCURRENCY || '8'
-    const total = extraEnv.QUAD_TOTAL || process.env.QUAD_TOTAL || '64'
+    const conc = (extraEnv.BENCH_CONCURRENCY || extraEnv.QUAD_CONCURRENCY || process.env.BENCH_CONCURRENCY || process.env.QUAD_CONCURRENCY || '8')
+    const total = (extraEnv.BENCH_TOTAL || extraEnv.QUAD_TOTAL || process.env.BENCH_TOTAL || process.env.QUAD_TOTAL || '64')
     const outAbs = resolvePath(resultsDir(), out)
     const args = [
       repoRoot() + '/packages/bench/dist/cli.js', 'sweep',
@@ -39,7 +48,7 @@ function runSweep(name: string, baseURL: string, out: string, extraEnv: Record<s
   })
 }
 
-async function waitHealthy(name: string, url: string, timeoutMs = Number(process.env.QUAD_HEALTH_TIMEOUT_MS || 60000)) {
+async function waitHealthy(name: string, url: string, timeoutMs = Number(process.env.BENCH_HEALTH_TIMEOUT_MS || process.env.QUAD_HEALTH_TIMEOUT_MS || 60000)) {
   const t0 = Date.now()
   while (Date.now() - t0 < timeoutMs) {
     try { const r = await fetch(url); if (r.ok) return } catch {}
@@ -129,8 +138,8 @@ function parseTiers() {
 }
 
 function parseTargets(): Set<string> {
-  const def = ['elide','express','fastapi','flask']
-  const raw = String(process.env.QUAD_TARGETS || '')
+  const def = ['node-raw','elide','express','fastapi','flask']
+  const raw = String(envFirst('BENCH_TARGETS','QUAD_TARGETS') || '')
   if (!raw.trim()) return new Set(def)
   const arr = raw.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean)
   const ok = new Set(def)
@@ -143,42 +152,60 @@ async function main() {
   const tiers = parseTiers()
 
   const targets = parseTargets()
-  const startAll = String(process.env.QUAD_START_SERVERS || '').toLowerCase() === '1' || String(process.env.QUAD_START_SERVERS || '').toLowerCase() === 'true'
+  const startAllFlag = (envFirst('BENCH_START_SERVERS','QUAD_START_SERVERS') || '').toLowerCase()
+  const startAll = startAllFlag === '1' || startAllFlag === 'true'
   const baseEnv = { ...process.env }
-  let elide: any = null, express: any = null, fastapi: any = null, flask: any = null
+  let nodeRaw: any = null, elide: any = null, express: any = null, fastapi: any = null, flask: any = null
 
   // Base URLs (allow override via env; supports docker-compose service names)
-  const baseElide   = String(process.env.QUAD_BASE_ELIDE   || 'http://localhost:8080')
-  const baseExpress = String(process.env.QUAD_BASE_EXPRESS || 'http://localhost:8081')
-  const baseFastapi = String(process.env.QUAD_BASE_FASTAPI || 'http://localhost:8082')
-  const baseFlask   = String(process.env.QUAD_BASE_FLASK   || 'http://localhost:8083')
+  const baseNodeRaw = envFirst('BENCH_BASE_NODE_RAW','QUAD_BASE_NODE_RAW','QUAD_BASE_ELIDE') || 'http://localhost:8080'
+  const baseExpress = envFirst('BENCH_BASE_EXPRESS','QUAD_BASE_EXPRESS') || 'http://localhost:8081'
+  const baseFastapi = envFirst('BENCH_BASE_FASTAPI','QUAD_BASE_FASTAPI') || 'http://localhost:8082'
+  const baseFlask   = envFirst('BENCH_BASE_FLASK','QUAD_BASE_FLASK')     || 'http://localhost:8083'
+  const baseElide   = envFirst('BENCH_BASE_ELIDE','QUAD_BASE_ELIDE_RT')  || 'http://localhost:8084'
+
 
   // Optional: dockerized Flask
-  const useDockerFlask = String(process.env.QUAD_DOCKER_FLASK || '').toLowerCase() === '1' || String(process.env.QUAD_DOCKER_FLASK || '').toLowerCase() === 'true'
+  const useDockerFlask = (()=>{ const f=(envFirst('BENCH_DOCKER_FLASK','QUAD_DOCKER_FLASK')||'').toLowerCase(); return f==='1'||f==='true' })()
 
   // Start only if requested AND not already healthy; health probes run below
-  if (startAll && targets.has('elide')) {
-    // Build and start Node Elide
-    if (process.platform === 'win32' && (String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='1' || String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='true')) {
+  if (startAll && targets.has('node-raw')) {
+    // Build and start Node (raw) harness
+    if (process.platform === 'win32' && ((envFirst('BENCH_WSL_NODE','QUAD_WSL_NODE')||'').toLowerCase()==='1' || (envFirst('BENCH_WSL_NODE','QUAD_WSL_NODE')||'').toLowerCase()==='true')) {
       const rootWsl = winPathToWsl(repoRoot())
       await new Promise<void>((resolve,reject)=>{
-        const p = startServer('wsl-elide-build','wsl.exe',['--cd', `${rootWsl}/apps/server-elide`, 'bash','-lc','pnpm -C . build'],{ env: baseEnv });
-        p.on('exit', (c:number)=> c===0?resolve():reject(new Error('elide build failed')))
+        const p = startServer('wsl-node-raw-build','wsl.exe',['--cd', `${rootWsl}/apps/server-elide`, 'bash','-lc','pnpm -C . build'],{ env: baseEnv });
+        p.on('exit', (c:number)=> c===0?resolve():reject(new Error('node-raw build failed')))
       })
-      elide = startServer('elide','wsl.exe',['--cd', `${rootWsl}/apps/server-elide`, 'bash','-lc','node dist/index.js'],{ env: baseEnv })
+      nodeRaw = startServer('node-raw','wsl.exe',['--cd', `${rootWsl}/apps/server-elide`, 'bash','-lc','node dist/index.js'],{ env: baseEnv })
     } else {
       await new Promise<void>((resolve,reject)=>{
-        const p = startServer('elide-build', process.platform==='win32'?'pnpm.cmd':'pnpm', ['-C','apps/server-elide','build'], { env: baseEnv });
-        p.on('exit', (c:number)=> c===0?resolve():reject(new Error('elide build failed')))
+        const p = startServer('node-raw-build', process.platform==='win32'?'pnpm.cmd':'pnpm', ['-C','apps/server-elide','build'], { env: baseEnv });
+        p.on('exit', (c:number)=> c===0?resolve():reject(new Error('node-raw build failed')))
       })
-      elide = startServer('elide', process.platform==='win32'?'pnpm.cmd':'pnpm', ['-C','apps/server-elide','start'], { env: baseEnv })
+      nodeRaw = startServer('node-raw', process.platform==='win32'?'pnpm.cmd':'pnpm', ['-C','apps/server-elide','start'], { env: baseEnv })
+    }
+  }
+
+
+  if (startAll && targets.has('elide')) {
+    try { await killListenersOnWindows(8084) } catch {}
+    const cmd = String(process.env.QUAD_ELIDE_RT_CMD || process.env.BENCH_ELIDE_CMD || '').trim()
+    if (cmd) {
+      if (process.platform === 'win32') {
+        elide = startServer('elide', 'cmd.exe', ['/c', cmd], { env: baseEnv, cwd: repoRoot() })
+      } else {
+        elide = startServer('elide', 'bash', ['-lc', cmd], { env: baseEnv, cwd: repoRoot() })
+      }
+    } else {
+      process.stderr.write('[elide][err] QUAD_ELIDE_RT_CMD/BENCH_ELIDE_CMD not provided; will only use base URL if already running\n')
     }
   }
 
   if (startAll && targets.has('express')) {
     // Free port 8081 proactively on Windows to avoid EADDRINUSE during local dev
     try { await killListenersOnWindows(8081) } catch {}
-    if (process.platform === 'win32' && (String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='1' || String(process.env.QUAD_WSL_NODE||'').toLowerCase()==='true')) {
+    if (process.platform === 'win32' && ((envFirst('BENCH_WSL_NODE','QUAD_WSL_NODE')||'').toLowerCase()==='1' || (envFirst('BENCH_WSL_NODE','QUAD_WSL_NODE')||'').toLowerCase()==='true')) {
       const rootWsl = winPathToWsl(repoRoot())
       await new Promise<void>((resolve,reject)=>{
         const p = startServer('wsl-express-build','wsl.exe',['--cd', `${rootWsl}/apps/baseline-express`, 'bash','-lc','pnpm -C . build'],{ env: baseEnv });
@@ -195,7 +222,7 @@ async function main() {
   }
 
   if (startAll && targets.has('fastapi')) {
-    if (process.platform === 'win32' && (String(process.env.QUAD_WSL_FASTAPI||'').toLowerCase()==='1' || String(process.env.QUAD_WSL_FASTAPI||'').toLowerCase()==='true')) {
+    if (process.platform === 'win32' && ((envFirst('BENCH_WSL_FASTAPI','QUAD_WSL_FASTAPI')||'').toLowerCase()==='1' || (envFirst('BENCH_WSL_FASTAPI','QUAD_WSL_FASTAPI')||'').toLowerCase()==='true')) {
       const rootWsl = winPathToWsl(repoRoot())
       const synKeys = ['SYN_FRAMES','SYN_DELAY_MS','SYN_BYTES','SYN_CPU_SPIN_MS','SYN_FANOUT','SYN_FANOUT_DELAY_MS','SYN_GZIP'] as const
       const kv = synKeys.map(k=> process.env[k] ? `${k}=${process.env[k]}` : '').filter(Boolean).join(' ')
@@ -226,45 +253,50 @@ async function main() {
 
   try {
     // Probe health per target; do not fail the whole run if one target is down
-    const healthy: Record<string, boolean> = { elide:false, express:false, fastapi:false, flask:false }
+    const healthy: Record<string, boolean> = { 'node-raw':false, elide:false, express:false, fastapi:false, flask:false }
     const probes: Array<Promise<void>> = []
     const probe = async (name:string, url:string) => {
       try { await waitHealthy(name, url) ; healthy[name] = true } catch (e:any) { process.stderr.write(`[${name}][err] ${e?.message||e}\n`) }
     }
-    if (targets.has('elide')) probes.push(probe('elide',`${baseElide.replace(/\/$/, '')}/healthz`))
-    if (targets.has('express')) probes.push(probe('express',`${baseExpress.replace(/\/$/, '')}/healthz`))
-    if (targets.has('fastapi')) probes.push(probe('fastapi',`${baseFastapi.replace(/\/$/, '')}/healthz`))
-    if (targets.has('flask')) probes.push(probe('flask',`${baseFlask.replace(/\/$/, '')}/healthz`))
+    if (targets.has('node-raw')) probes.push(probe('node-raw',`${baseNodeRaw.replace(/\/$/, '')}/healthz`))
+    if (targets.has('elide'))    probes.push(probe('elide',`${baseElide.replace(/\/$/, '')}/healthz`))
+    if (targets.has('express'))  probes.push(probe('express',`${baseExpress.replace(/\/$/, '')}/healthz`))
+    if (targets.has('fastapi'))  probes.push(probe('fastapi',`${baseFastapi.replace(/\/$/, '')}/healthz`))
+    if (targets.has('flask'))    probes.push(probe('flask',`${baseFlask.replace(/\/$/, '')}/healthz`))
     await Promise.all(probes)
 
     const runForTier = async (tier: {c:number,t:number}) => {
       const baseEnv = { ...process.env }
-      const envElide   = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t), LLM_MODEL: 'synthetic' }
-      const envExpress = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
-      const envFastapi = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
-      const envFlask   = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
+      const envNodeRaw  = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t), LLM_MODEL: 'synthetic' }
+      const envElide    = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t), LLM_MODEL: 'synthetic' }
+      const envExpress  = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
+      const envFastapi  = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
+      const envFlask    = { ...baseEnv, QUAD_CONCURRENCY: String(tier.c), QUAD_TOTAL: String(tier.t) }
 
-      const outE = `${RUN_REL}/bench-elide.${tier.c}x${tier.t}.html`
-      const outX = `${RUN_REL}/bench-express.${tier.c}x${tier.t}.html`
-      const outF = `${RUN_REL}/bench-fastapi.${tier.c}x${tier.t}.html`
-      const outFl = `${RUN_REL}/bench-flask.${tier.c}x${tier.t}.html`
+      const outNR  = `${RUN_REL}/bench-node-raw.${tier.c}x${tier.t}.html`
+      const outE   = `${RUN_REL}/bench-elide.${tier.c}x${tier.t}.html`
+      const outX   = `${RUN_REL}/bench-express.${tier.c}x${tier.t}.html`
+      const outF   = `${RUN_REL}/bench-fastapi.${tier.c}x${tier.t}.html`
+      const outFl  = `${RUN_REL}/bench-flask.${tier.c}x${tier.t}.html`
 
       if (sequential) {
-        if (targets.has('elide'))   { if (healthy.elide)   { try { await runSweep('elide',baseElide, outE, envElide) } catch (e) { writeFail(outE,'elide',e) } } else { writeFail(outE,'elide',new Error('not healthy')) } }
-        if (targets.has('express')) { if (healthy.express) { try { await runSweep('express',baseExpress, outX, envExpress) } catch (e) { writeFail(outX,'express',e) } } else { writeFail(outX,'express',new Error('not healthy')) } }
-        if (targets.has('fastapi')) { if (healthy.fastapi) { try { await runSweep('fastapi',baseFastapi, outF, envFastapi) } catch (e) { writeFail(outF,'fastapi',e) } } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
-        if (targets.has('flask'))   { if (healthy.flask)   { try { await runSweep('flask',baseFlask, outFl, envFlask) } catch (e) { writeFail(outFl,'flask',e) } } else { writeFail(outFl,'flask',new Error('not healthy')) } }
+        if (targets.has('node-raw')) { if (healthy['node-raw']) { try { await runSweep('node-raw',baseNodeRaw, outNR, envNodeRaw) } catch (e) { writeFail(outNR,'node-raw',e) } } else { writeFail(outNR,'node-raw',new Error('not healthy')) } }
+        if (targets.has('elide'))    { if (healthy.elide)     { try { await runSweep('elide',baseElide, outE, envElide) } catch (e) { writeFail(outE,'elide',e) } } else { writeFail(outE,'elide',new Error('not healthy')) } }
+        if (targets.has('express'))  { if (healthy.express)   { try { await runSweep('express',baseExpress, outX, envExpress) } catch (e) { writeFail(outX,'express',e) } } else { writeFail(outX,'express',new Error('not healthy')) } }
+        if (targets.has('fastapi'))  { if (healthy.fastapi)   { try { await runSweep('fastapi',baseFastapi, outF, envFastapi) } catch (e) { writeFail(outF,'fastapi',e) } } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
+        if (targets.has('flask'))    { if (healthy.flask)     { try { await runSweep('flask',baseFlask, outFl, envFlask) } catch (e) { writeFail(outFl,'flask',e) } } else { writeFail(outFl,'flask',new Error('not healthy')) } }
       } else {
         const jobs: Array<Promise<any>> = []
         const names: string[] = []
-        if (targets.has('elide'))   { if (healthy.elide)   { jobs.push(runSweep('elide',baseElide, outE, envElide)); names.push('elide') } else { writeFail(outE,'elide',new Error('not healthy')) } }
-        if (targets.has('express')) { if (healthy.express) { jobs.push(runSweep('express',baseExpress, outX, envExpress)); names.push('express') } else { writeFail(outX,'express',new Error('not healthy')) } }
-        if (targets.has('fastapi')) { if (healthy.fastapi) { jobs.push(runSweep('fastapi',baseFastapi, outF, envFastapi)); names.push('fastapi') } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
-        if (targets.has('flask'))   { if (healthy.flask)   { jobs.push(runSweep('flask',baseFlask, outFl, envFlask)); names.push('flask') } else { writeFail(outFl,'flask',new Error('not healthy')) } }
+        if (targets.has('node-raw')) { if (healthy['node-raw']) { jobs.push(runSweep('node-raw',baseNodeRaw, outNR, envNodeRaw)); names.push('node-raw') } else { writeFail(outNR,'node-raw',new Error('not healthy')) } }
+        if (targets.has('elide'))    { if (healthy.elide)     { jobs.push(runSweep('elide',baseElide, outE, envElide)); names.push('elide') } else { writeFail(outE,'elide',new Error('not healthy')) } }
+        if (targets.has('express'))  { if (healthy.express)   { jobs.push(runSweep('express',baseExpress, outX, envExpress)); names.push('express') } else { writeFail(outX,'express',new Error('not healthy')) } }
+        if (targets.has('fastapi'))  { if (healthy.fastapi)   { jobs.push(runSweep('fastapi',baseFastapi, outF, envFastapi)); names.push('fastapi') } else { writeFail(outF,'fastapi',new Error('not healthy')) } }
+        if (targets.has('flask'))    { if (healthy.flask)     { jobs.push(runSweep('flask',baseFlask, outFl, envFlask)); names.push('flask') } else { writeFail(outFl,'flask',new Error('not healthy')) } }
         const results = await Promise.allSettled(jobs)
         for (let i=0;i<results.length;i++) {
           const nm = names[i]
-          const outMap: any = { elide: outE, express: outX, fastapi: outF, flask: outFl }
+          const outMap: any = { 'node-raw': outNR, 'elide': outE, express: outX, fastapi: outF, flask: outFl }
           const r = results[i]
           if (r.status==='rejected') writeFail(outMap[nm], nm as any, (r as any).reason)
         }
@@ -274,6 +306,7 @@ async function main() {
     mkdirSync(resolvePath(resultsDir(), RUN_REL), { recursive: true })
     for (const tier of tiers) await runForTier(tier)
   } finally {
+    await killTree(nodeRaw?.pid)
     await killTree(elide?.pid)
     await killTree(express?.pid)
     await killTree(fastapi?.pid)

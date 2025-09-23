@@ -88,22 +88,23 @@ function generateComparativeAnalysis(scenarios) {
   for (const [scenarioKey, rows] of scenarios) {
     if (rows.length < 2) continue;
 
-    const elide = rows.find(r => r.server === 'elide');
-    const others = rows.filter(r => r.server !== 'elide');
+    const baseline = rows.find(r => r.server === 'elide');
+    if (!baseline) continue;
+    const others = rows.filter(r => r.server !== baseline.server);
 
-    if (!elide || others.length === 0) continue;
+    if (others.length === 0) continue;
 
     for (const other of others) {
       const metrics = ['rps', 'ttft_p50', 'ttft_p95', 'dur_p95'];
       for (const metric of metrics) {
-        const insight = getPerformanceInsight(metric, other[metric], elide[metric], other.server, 'elide');
+        const insight = getPerformanceInsight(metric, other[metric], baseline[metric], other.server, baseline.server);
         if (insight) {
           insights.push({
             scenario: scenarioKey,
-            comparison: `${other.server} vs elide`,
+            comparison: `${other.server} vs ${baseline.server}`,
             metric,
             insight,
-            magnitude: Math.abs(calculatePercentDiff(other[metric], elide[metric]))
+            magnitude: Math.abs(calculatePercentDiff(other[metric], baseline[metric]))
           });
         }
       }
@@ -442,15 +443,15 @@ async function main() {
 
   for (const key of scenarioKeys) {
     const rows = scenarios.get(key);
-    // order: elide, express, fastapi, flask
+    // order: elide, elide-rt, express, fastapi, flask
     rows.sort((a, b) => {
-      const pri = { elide: 0, express: 1, fastapi: 2, flask: 3 };
+      const pri = { elide: 0, 'node-raw': 1, express: 2, fastapi: 3, flask: 4 };
       const pa = pri[a.server] ?? 9;
       const pb = pri[b.server] ?? 9;
       return pa - pb;
     });
 
-    const elide = rows.find(r => r.server === 'elide');
+    const baseline = rows.find(r => r.server === 'elide') || null;
     const scenarioWinners = winners.get(key) || {};
 
     // Generate sparklines for trends (if we have historical data)
@@ -472,8 +473,8 @@ async function main() {
 
     for (const r of rows) {
       const getComparisonClass = (metric, value) => {
-        if (!elide || r.server === 'elide' || !value || !elide[metric]) return 'perf-neutral';
-        const diff = calculatePercentDiff(elide[metric], value);
+        if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return 'perf-neutral';
+        const diff = calculatePercentDiff(baseline[metric], value);
         if (Math.abs(diff) < 5) return 'perf-neutral';
 
         // For RPS, higher is better. For latency metrics, lower is better.
@@ -483,8 +484,8 @@ async function main() {
       };
 
       const getComparisonText = (metric, value) => {
-        if (!elide || r.server === 'elide' || !value || !elide[metric]) return fmt(value);
-        const diff = calculatePercentDiff(elide[metric], value);
+        if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return fmt(value);
+        const diff = calculatePercentDiff(baseline[metric], value);
         if (Math.abs(diff) < 5) return fmt(value);
         return `${fmt(value)} (${fmtPercent(diff)})`;
       };
@@ -607,8 +608,8 @@ async function main() {
 
         for (const key of keys) {
           const rows = perScenarios.get(key);
-          rows.sort((a,b)=>{ const pri={elide:0,express:1,fastapi:2,flask:3}; return (pri[a.server]??9)-(pri[b.server]??9); });
-          const elide = rows.find(r => r.server === 'elide');
+          rows.sort((a,b)=>{ const pri={elide:0,'elide-rt':1,express:2,fastapi:3,flask:4}; return (pri[a.server]??9)-(pri[b.server]??9); });
+          const baseline = rows.find(r => r.server === 'elide') || rows.find(r => r.server === 'elide-rt');
 
           perHtml += `<h3>Scenario ${htmlEscape(key)}</h3>`;
           perHtml += '<table class="metric-table"><thead><tr>'+
@@ -617,8 +618,8 @@ async function main() {
 
           for (const r of rows) {
             const getComparisonClass = (metric, value) => {
-              if (!elide || r.server === 'elide' || !value || !elide[metric]) return 'perf-neutral';
-              const diff = calculatePercentDiff(elide[metric], value);
+              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return 'perf-neutral';
+              const diff = calculatePercentDiff(baseline[metric], value);
               if (Math.abs(diff) < 5) return 'perf-neutral';
               const higherIsBetter = metric === 'rps';
               const isBetter = higherIsBetter ? diff > 0 : diff < 0;
@@ -626,8 +627,8 @@ async function main() {
             };
 
             const getComparisonText = (metric, value) => {
-              if (!elide || r.server === 'elide' || !value || !elide[metric]) return fmt(value);
-              const diff = calculatePercentDiff(elide[metric], value);
+              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return fmt(value);
+              const diff = calculatePercentDiff(baseline[metric], value);
               if (Math.abs(diff) < 5) return fmt(value);
               return `${fmt(value)} (${fmtPercent(diff)})`;
             };

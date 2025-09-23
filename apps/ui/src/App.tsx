@@ -6,14 +6,14 @@ type Settings = {
   baseURL: string
   apiKey: string
   model: string
-  runtime: 'elide'|'docker'
+  runtime: 'node-raw'|'docker'
 }
 
 const defaultSettings: Settings = {
   baseURL: import.meta.env.VITE_LLM_BASE_URL || 'http://localhost:1234/v1',
   apiKey: import.meta.env.VITE_LLM_API_KEY || 'lm-studio',
   model: import.meta.env.VITE_LLM_MODEL || 'openai/gpt-oss-120b',
-  runtime: 'elide',
+  runtime: 'node-raw',
 }
 
 class ErrorBoundary extends React.Component<{children:any}, {hasError:boolean}> {
@@ -107,7 +107,7 @@ export default function App() {
         <h3>Settings</h3>
         <label>Runtime
           <select value={settings.runtime} onChange={e=>setSettings(s=>({ ...s, runtime:e.target.value as any }))}>
-            <option value="elide">Elide</option>
+            <option value="node-raw">Node (raw)</option>
             <option value="docker">Docker</option>
           </select>
         </label>
@@ -196,6 +196,10 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
 
   const [apexMax, setApexMax] = useState(8192)
 
+
+  // Optional Elide runtime configuration
+  const [elideRtBase, setElideRtBase] = useState('')
+  const [elideRtCmd, setElideRtCmd] = useState('')
 
   const p = (arr:number[], q:number)=>{
 
@@ -403,7 +407,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   const [cliLogs, setCliLogs] = useState<Array<{text:string, level?:string}>>([])
 
 
-  const [targetsHealth, setTargetsHealth] = useState<{elide?:boolean;express?:boolean;fastapi?:boolean;flask?:boolean}|null>(null)
+  const [targetsHealth, setTargetsHealth] = useState<{['node-raw']?:boolean;elide?:boolean;express?:boolean;fastapi?:boolean;flask?:boolean}|null>(null)
   const [dockerAvail, setDockerAvail] = useState<boolean|null>(null)
   const [probingTargets, setProbingTargets] = useState(false)
   async function probeTargets(){
@@ -421,9 +425,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   useEffect(()=>{ probeTargets().catch(()=>{}) },[])
 
 
-  const [targets, setTargets] = useState<{elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ elide:true, express:true, fastapi:true, flask:true })
-  function toggleTarget(name: 'elide'|'express'|'fastapi'|'flask'){
-    setTargets(prev => ({ ...prev, [name]: !prev[name] }))
+  const [targets, setTargets] = useState<{['node-raw']:boolean;elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ 'node-raw':true, elide:false, express:true, fastapi:true, flask:true })
+  function toggleTarget(name: 'node-raw'|'elide'|'express'|'fastapi'|'flask'){
+    setTargets(prev => ({ ...prev, [name]: !prev[name as keyof typeof prev] as any }))
   }
 
   function toggleModeInSuite(m:string){
@@ -444,6 +448,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
         frames, delay_ms: delayMs, bytes, cpu_spin_ms: cpuSpinMs,
         fanout, fanout_delay_ms: 0, gzip,
         targets: selectedTargets,
+        elideRtBase, elideRtCmd,
         startServers: true, wslNode: false, wslFastapi: false,
       })})
       const j = await resp.json()
@@ -469,7 +474,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
         try{
           const d = JSON.parse(ev.data); const line = (d?.text ?? String(ev.data)); const level = d?.level
           pushLog(line, level)
-          const m = /\[(elide|express|fastapi|flask)\][^\n]*wrote\s+bench-(?:elide|express|fastapi|flask)\.(\d+)x(\d+)\.html/i.exec(line)
+          const m = /\[(node-raw|elide|express|fastapi|flask)\][^\n]*wrote\s+bench-(?:node-raw|elide|express|fastapi|flask)\.(\d+)x(\d+)\.html/i.exec(line)
           if (m) {
             const name = m[1]; const c = Number(m[2]); const t = Number(m[3])
             setCliProgress(prev => prev.find(p=>p.name===name && p.c===c && p.t===t) ? prev : prev.concat({ name, c, t }))
@@ -518,8 +523,8 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, color: '#333' }}>Target Status</h3>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span title={`Elide: ${targetsHealth?.elide === true ? 'up' : targetsHealth?.elide === false ? 'down' : '?'}`}>
-            Elide {targetsHealth ? (targetsHealth.elide ? '🟢' : '🔴') : '⚪'}
+          <span title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
+            Node (raw) {targetsHealth ? (targetsHealth['node-raw'] ? '🟢' : '🔴') : '⚪'}
           </span>
           <span title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
             Express {targetsHealth ? (targetsHealth.express ? '🟢' : '🔴') : '⚪'}
@@ -743,9 +748,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
             <div style={{ marginBottom: 16 }}>
               <h4 style={{ margin: '0 0 8px 0', color: '#6c757d' }}>Target Frameworks</h4>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <label title={`Elide: ${targetsHealth?.elide === true ? 'up' : targetsHealth?.elide === false ? 'down' : '?'}`}>
-                  <input type="checkbox" checked={targets.elide} onChange={() => toggleTarget('elide')} />
-                  Elide {targetsHealth ? (targetsHealth.elide ? '🟢' : '🔴') : '⚪'}
+                <label title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
+                  <input type="checkbox" checked={targets['node-raw']} onChange={() => toggleTarget('node-raw')} />
+                  Node (raw) {targetsHealth ? (targetsHealth['node-raw'] ? '🟢' : '🔴') : '⚪'}
                 </label>
                 <label title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
                   <input type="checkbox" checked={targets.express} onChange={() => toggleTarget('express')} />
@@ -755,6 +760,27 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
                   <input type="checkbox" checked={targets.fastapi} onChange={() => toggleTarget('fastapi')} />
                   FastAPI {targetsHealth ? (targetsHealth.fastapi ? '🟢' : '🔴') : '⚪'}
                 </label>
+
+	            <div style={{ marginTop: 8 }}>
+	              <details>
+	                <summary style={{ cursor: 'pointer' }}>Elide (runtime) — optional</summary>
+	                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
+	                  <label title="Include Elide runtime in the run (if configured)">
+	                    <input type="checkbox" checked={!!targets.elide} onChange={() => toggleTarget('elide')} /> Enable Elide (runtime)
+	                  </label>
+	                  <label title="Base URL of the Elide runtime (used as-is if reachable)">
+	                    Base URL <input placeholder="http://localhost:8084" value={elideRtBase} onChange={e => setElideRtBase(e.target.value)} />
+	                  </label>
+	                  <label title="Launch command to start Elide runtime (used when 'Start servers' is enabled)">
+	                    Launch command <input placeholder="elide serve ..." value={elideRtCmd} onChange={e => setElideRtCmd(e.target.value)} />
+	                  </label>
+	                </div>
+	                <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6 }}>
+	                  If Base URL responds at <code>/healthz</code>, it will be used. If Launch command is provided and “Start servers” is on, the suite will try to start it.
+	                </div>
+	              </details>
+	            </div>
+
                 <label title={`Flask: ${targetsHealth?.flask === true ? 'up' : targetsHealth?.flask === false ? 'down' : '?'}`}>
                   <input type="checkbox" checked={targets.flask} onChange={() => toggleTarget('flask')} />
                   Flask {targetsHealth ? (targetsHealth.flask ? '🟢' : '🔴') : '⚪'}
@@ -808,7 +834,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
                     <input type="checkbox" checked={errorsOnly} onChange={e => setErrorsOnly(e.target.checked)} /> Errors only
                   </label>
                 </div>
-                <pre style={{ maxHeight: 200, overflow: 'auto', background: '#f8f9fa', border: '1px solid #dee2e6', padding: 12, borderRadius: 4, fontSize: 12 }}>
+                <pre style={{ maxHeight: 200, overflowY: 'auto', overflowX: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#f8f9fa', border: '1px solid #dee2e6', padding: 12, borderRadius: 4, fontSize: 12 }}>
                   {cliLogs.filter(l => !errorsOnly || l.level === 'err').slice(-100).map((l, i) => (
                     <span key={i} style={{ color: l.level === 'err' ? '#dc3545' : '#198754' }}>{l.text}{'\n'}</span>
                   ))}

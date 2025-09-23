@@ -15,7 +15,7 @@ A ready‑to‑run fork of OpenHands using Elide as the primary runtime and HTTP
 ```
 pnpm i -w
 ```
-2) Dev mode (recommended): starts Elide server + Vite UI (open http://localhost:5173)
+2) Dev mode (recommended): starts Node (raw) server harness + Vite UI (open http://localhost:5173)
 ```
 pnpm dev
 ```
@@ -41,7 +41,7 @@ Notes:
 - A wrk utility is available: `docker compose -f infra/docker-compose.yml --profile tools run --rm wrk wrk --help`.
 
 ## Playwright E2E (smoke)
-- No need to pre-start servers; tests start the Elide server and UI automatically.
+- No need to pre-start servers; tests start the server harness and UI automatically.
 - Install Playwright browsers once: `pnpm dlx playwright install --with-deps`
 - Run tests: `pnpm -C packages/e2e test`
 
@@ -49,10 +49,34 @@ Notes:
 - `pnpm docker:build` / `pnpm docker:up` / `pnpm docker:down` / `pnpm docker:bench`
 
 
+
+## Elide (runtime) target
+- The Node harness formerly labeled “Elide” is now “Node (raw)”. The true Elide runtime is included as its own target: `elide`.
+- Provide an Elide HTTP server on port 8084 with at least:
+  - `GET /healthz` → 200 OK when ready
+  - `POST /api/chat/completions` → streaming or buffered JSON per OpenAI‑style schema
+- Fastest path (per Dario): use the Elide repo sample at `tools/scripts/server.js`.
+  - Example launch: set
+    - `QUAD_BASE_ELIDE_RT=http://localhost:8084`  (runtime base URL the bench will target)
+    - `QUAD_ELIDE_RT_CMD="node ../elide/tools/scripts/server.js --port 8084"`  (authoritative sample start command)
+  - Then run the Comparative sweep with the “Elide (runtime)” option enabled in the UI.
+- The bench will start this command automatically during a run when “Start servers” is checked.
+
+
+### Bench environment variables (aliases)
+- Prefer BENCH_* variables; QUAD_* are still accepted for compatibility
+- Common variables:
+  - BENCH_TARGETS (e.g., node-raw,elide,express,fastapi,flask)
+  - BENCH_START_SERVERS (true/false)
+  - BENCH_BASE_NODE_RAW, BENCH_BASE_ELIDE, BENCH_BASE_EXPRESS, BENCH_BASE_FASTAPI, BENCH_BASE_FLASK
+  - BENCH_WSL_NODE, BENCH_WSL_FASTAPI (true/false on Windows)
+  - BENCH_DOCKER_FLASK (true/false)
+  - BENCH_CONCURRENCY, BENCH_TOTAL (per-tier overrides)
+
 ## Using the Bench (from the UI)
 - Single Run: fills fields above and clicks “Run” → shows live stats and a quick summary.
 - Full sweep + save: runs standard tiers (8×64 → 128×512) and saves a UI JSON; visible under /results/index.html.
-- Run via CLI (quad): launches the full Elide/Express/FastAPI/Flask sweep across your tiers.
+- Run via CLI (bench): launches the full Elide/Node-raw/Express/FastAPI/Flask sweep across your tiers.
   - Live panel shows CPU/RSS sparklines, per‑tier badges, and a color‑coded log (stderr in red).
   - When finished, you’ll get links: “Open results index” and “Open log”.
 
@@ -68,7 +92,7 @@ Notes:
 ## Windows notes (WSL recommended)
 - FastAPI baseline can build/run inside WSL if `QUAD_WSL_FASTAPI=1`.
 - Node baselines can build/run inside WSL if `QUAD_WSL_NODE=1`.
-- Ports used: 8080 (Elide), 8081 (Express), 8082 (FastAPI), 8083 (Flask). Free them if already taken.
+- Ports used: 8080 (UI + Node harness), 8081 (Express), 8082 (FastAPI), 8083 (Flask). Free them if already taken.
 
 ## Troubleshooting
 - If the UI shows an SSE MIME warning, refresh the page; the server now prioritizes stream routes.

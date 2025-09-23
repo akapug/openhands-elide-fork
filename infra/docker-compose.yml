@@ -71,7 +71,7 @@ services:
     image: openhands-elide/workspace:latest
     depends_on: [elide, express, fastapi, flask]
     working_dir: /app
-    command: ["node", "packages/bench/dist/quad.js"]
+    command: ["node", "packages/bench/dist/bench.js"]
     environment:
       - QUAD_BASE_ELIDE=http://elide:8080
       - QUAD_BASE_EXPRESS=http://express:8081

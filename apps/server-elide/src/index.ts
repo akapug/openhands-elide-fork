@@ -115,7 +115,7 @@ function proxyTo(target: string, req: any, res: any) {
 async function handleChatProxy(req: any, res: any) {
   const started = performance.now()
   let ttftObserved = false
-  let labels = { runtime: 'elide', model: 'unknown' } as { runtime: string, model: string }
+  let labels = { runtime: 'node-raw', model: 'unknown' } as { runtime: string, model: string }
   let statusLabel = '200'
   try {
     const chunks: Buffer[] = [];
@@ -123,7 +123,7 @@ async function handleChatProxy(req: any, res: any) {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
     const baseURL: string = body.baseURL || process.env.LLM_BASE_URL || "http://localhost:1234/v1";
     const apiKey: string | undefined = body.apiKey || process.env.LLM_API_KEY;
-    labels = { runtime: String(body.runtime || 'elide'), model: String(body.model || process.env.LLM_MODEL || 'unknown') }
+    labels = { runtime: String(body.runtime || 'node-raw'), model: String(body.model || process.env.LLM_MODEL || 'unknown') }
     chatInFlight.labels(labels.runtime, labels.model).inc()
     // Synthetic SSE mode to isolate serving overhead
     if (String(labels.model).toLowerCase() === 'synthetic' || body.synthetic) {
@@ -447,7 +447,7 @@ const server = createServer(async (req, res) => {
         } catch { resolve(false) }
       })
       const data = {
-        elide: true, // this server
+        'node-raw': true, // this server
         express: await probe('http://localhost:8081/healthz'),
         fastapi: await probe('http://localhost:8082/healthz'),
         flask: await probe('http://localhost:8083/healthz'),
@@ -508,8 +508,10 @@ const server = createServer(async (req, res) => {
       mkdirSync(RESULTS_DIR, { recursive: true })
       const logPath = resolve(RESULTS_DIR, `cli-${ts}.log`)
       const out = createWriteStream(logPath)
-      const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/quad.js')
-      const targetsArr: string[] = Array.isArray(body.targets) && body.targets.length ? body.targets.map((s:string)=>String(s).toLowerCase()) : ['elide','express','fastapi','flask']
+      const cliPath = resolve(REPO_ROOT, 'packages/bench/dist/bench.js')
+      const targetsArr: string[] = Array.isArray(body.targets) && body.targets.length
+        ? body.targets.map((s:string)=>{ const k = String(s).toLowerCase(); if (k==='elidert'||k==='elide-rt') return 'elide'; return k; })
+        : ['node-raw','express','fastapi','flask']
       const env = {
         ...process.env,
         QUAD_RUN_ID: runId,
@@ -521,6 +523,9 @@ const server = createServer(async (req, res) => {
         QUAD_WSL_FASTAPI: wslFastapi ? '1' : '',
         QUAD_TARGETS: targetsArr.join(','),
         QUAD_DOCKER_FLASK: '1',
+        // Optional Elide runtime wiring (feature flag)
+        QUAD_BASE_ELIDE_RT: typeof body.elideRtBase === 'string' ? body.elideRtBase : (process.env.QUAD_BASE_ELIDE_RT || ''),
+        QUAD_ELIDE_RT_CMD: typeof body.elideRtCmd === 'string' ? body.elideRtCmd : (process.env.QUAD_ELIDE_RT_CMD || ''),
         SYN_FRAMES: String(frames),
         SYN_DELAY_MS: String(delay_ms),
         SYN_BYTES: String(bytes),
