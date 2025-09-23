@@ -446,9 +446,11 @@ const server = createServer(async (req, res) => {
           p.on('error', ()=> { clearTimeout(to); resolve(false) })
         } catch { resolve(false) }
       })
+      const base = new URL(req.url || '/', 'http://localhost')
+      const elideBase = (base.searchParams.get('elideBase') || process.env.BENCH_BASE_ELIDE || 'http://localhost:8084').replace(/\/+$/,'')
       const data = {
         'node-raw': true, // this server
-        elide:   await probe('http://localhost:8084/healthz'),
+        elide:   await probe(`${elideBase}/healthz`),
         express: await probe('http://localhost:8081/healthz'),
         fastapi: await probe('http://localhost:8082/healthz'),
         flask:   await probe('http://localhost:8083/healthz'),
@@ -583,6 +585,21 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  if (url === '/bench/start-all' && req.method === 'POST') {
+    try {
+      const startAll = resolve(REPO_ROOT, 'packages/bench/dist/start-all.js')
+      const p = spawn(process.execPath, [startAll], { cwd: REPO_ROOT, stdio: 'ignore', detached: true })
+      try { p.unref() } catch {}
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, pid: p.pid }))
+    } catch (e: any) {
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }))
+    }
+    return
+  }
+
+
   if (url.startsWith('/bench/run-cli/status')) {
     const q = new URL(req.url || '/', `http://${req.headers.host}`).searchParams
     const pid = Number(q.get('pid')||'0')
@@ -666,6 +683,11 @@ const server = createServer(async (req, res) => {
   if (await tryServeStatic(req, res)) return;
   proxyTo(VITE_DEV_URL, req, res);
 });
+
+
+server.on('error', (err: any) => {
+  console.error('server-elide failed to start:', err?.message || err)
+})
 
 server.listen(PORT, () => {
   console.log(`server-elide listening on :${PORT}`);

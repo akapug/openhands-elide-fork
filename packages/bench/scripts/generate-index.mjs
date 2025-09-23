@@ -286,6 +286,138 @@ async function main() {
   // Visual enhancements
   const winners = identifyWinners(scenarios);
 
+  // Build per-run pages and collect run links BEFORE generating the main index sections
+  const runsRoot = path.join(resultsDir, 'runs');
+  let runLinks = '';
+  let latestName = '';
+
+  try {
+    const names = await fs.readdir(runsRoot);
+    for (const name of names.sort()) {
+      const rp = path.join(runsRoot, name);
+      try {
+        latestName = name; // track last name in sorted order
+
+        const st = await fs.stat(rp); if (!st.isDirectory()) continue;
+        const benchFiles = (await fs.readdir(rp)).filter(f=>f.startsWith('bench-') && f.endsWith('.html')).sort();
+        // Build per-run index from bench files in this folder
+        const perEntries = [];
+        for (const f of benchFiles) {
+          const html = await fs.readFile(path.join(rp, f), 'utf8');
+          const metrics = parseMetrics(html);
+          const meta = labelFromFilename(f);
+          const conc = Number.isFinite(metrics.concurrency) ? metrics.concurrency : meta.conc;
+          const total = Number.isFinite(metrics.total) ? metrics.total : meta.total;
+          perEntries.push({ file: f, ...meta, ...metrics, concurrency: conc, total });
+        }
+        // group by scenario
+        const perScenarios = new Map();
+        for (const e of perEntries) {
+          const key = `${e.concurrency}x${e.total}`;
+          if (!perScenarios.has(key)) perScenarios.set(key, []);
+          perScenarios.get(key).push(e);
+        }
+        const keys = Array.from(perScenarios.keys()).sort((a,b)=>{ const [ac,at]=a.split('x').map(Number); const [bc,bt]=b.split('x').map(Number); return ac-bc || at-bt; });
+        const present = Array.from(new Set(perEntries.map(e=>e.server))).sort().join(', ');
+        const runInsights = generateComparativeAnalysis(perScenarios);
+        const runSummary = generateExecutiveSummary(perScenarios, runInsights);
+
+        let perHtml = '<!doctype html><meta charset="utf-8"/><title>Elide-Bench Run: '+htmlEscape(name)+'</title>'+
+                      `<style>
+                        body { font: 14px system-ui, 'Segoe UI', Arial; margin: 20px; background: #f8f9fa; }
+                        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                        table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+                        td, th { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
+                        th { background: #f8f9fa; font-weight: 600; }
+                        h1, h2 { color: #495057; }
+                        h3 { color: #6c757d; }
+                        .sub { color: #6c757d; font-size: 12px; margin-bottom: 16px; }
+                        .hdr { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+                        .summary { background: #e7f3ff; padding: 16px; border-radius: 6px; margin: 16px 0; }
+                        .insight { background: #f8f9fa; padding: 8px; margin: 4px 0; border-left: 3px solid #0d6efd; border-radius: 3px; font-size: 13px; }
+                        .perf-better { color: #198754; font-weight: 600; }
+                        .perf-worse { color: #dc3545; font-weight: 600; }
+                        .perf-neutral { color: #6c757d; }
+                        .metric-table td:nth-child(3), .metric-table td:nth-child(4), .metric-table td:nth-child(5), .metric-table td:nth-child(6), .metric-table td:nth-child(7) { text-align: right; font-family: monospace; }
+                        button { padding: 6px 12px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; }
+                        button:hover { background: #0b5ed7; }
+                        a { color: #0d6efd; text-decoration: none; }
+                        a:hover { text-decoration: underline; }
+                      </style>`+
+                      '<div class="container">'+
+                      `<div class="hdr"><h1 style="margin:0">🚀 Bench Run: ${htmlEscape(name)}</h1><button onclick="navigator.clipboard.writeText(location.href)">📋 Copy Link</button><a href="../../index.html">← Back to Results</a></div>`+
+                      `<div class="sub">Frameworks tested: ${htmlEscape(present)} • ${benchFiles.length} individual reports • Generated ${new Date().toLocaleString()}</div>`;
+
+        // Add run summary
+        if (runSummary.significantInsights > 0) {
+          perHtml += '<div class="summary">';
+          perHtml += '<h3 style="margin-top: 0;">📊 Run Summary</h3>';
+          perHtml += `<p><strong>${runSummary.totalTests}</strong> tests across <strong>${runSummary.totalScenarios}</strong> scenarios</p>`;
+          perHtml += `<p><strong>${runSummary.significantInsights}</strong> significant performance differences identified</p>`;
+          if (runSummary.topInsight) {
+            perHtml += `<p><strong>Key Finding:</strong> ${runSummary.topInsight.insight}</p>`;
+          }
+          perHtml += '</div>';
+        }
+
+        for (const key of keys) {
+          const rows = perScenarios.get(key);
+          rows.sort((a,b)=>{ const pri={elide:0,'elide-rt':1,express:2,fastapi:3,flask:4}; return (pri[a.server]??9)-(pri[b.server]??9); });
+          const baseline = rows.find(r => r.server === 'elide') || rows.find(r => r.server === 'elide-rt');
+
+
+          perHtml += `<h3>Scenario ${htmlEscape(key)}</h3>`;
+          perHtml += '<table class="metric-table"><thead><tr>'+
+                     '<th>Framework</th><th>Scenario</th><th>RPS</th><th>TTFT P50 (ms)</th><th>TTFT P95 (ms)</th><th>TTFT P99 (ms)</th><th>Duration P95 (ms)</th>'+
+                     '</tr></thead><tbody>';
+
+          for (const r of rows) {
+            const getComparisonClass = (metric, value) => {
+              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return 'perf-neutral';
+              const diff = calculatePercentDiff(baseline[metric], value);
+              if (Math.abs(diff) < 5) return 'perf-neutral';
+              const higherIsBetter = metric === 'rps';
+              const isBetter = higherIsBetter ? diff > 0 : diff < 0;
+              return isBetter ? 'perf-better' : 'perf-worse';
+            };
+
+            const getComparisonText = (metric, value) => {
+              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return fmt(value);
+              const diff = calculatePercentDiff(baseline[metric], value);
+              if (Math.abs(diff) < 5) return fmt(value);
+              return `${fmt(value)} (${fmtPercent(diff)})`;
+            };
+
+            perHtml += '<tr>'+
+              `<td><strong>${htmlEscape(r.server)}</strong></td>`+
+              `<td>${htmlEscape(r.file.replace('bench-', '').replace('.html', ''))}</td>`+
+              `<td class="${getComparisonClass('rps', r.rps)}">${getComparisonText('rps', r.rps)}</td>`+
+              `<td class="${getComparisonClass('ttft_p50', r.ttft_p50)}">${getComparisonText('ttft_p50', r.ttft_p50)}</td>`+
+              `<td class="${getComparisonClass('ttft_p95', r.ttft_p95)}">${getComparisonText('ttft_p95', r.ttft_p95)}</td>`+
+              `<td class="${getComparisonClass('ttft_p99', r.ttft_p99)}">${getComparisonText('ttft_p99', r.ttft_p99)}</td>`+
+              `<td class="${getComparisonClass('dur_p95', r.dur_p95)}">${getComparisonText('dur_p95', r.dur_p95)}</td>`+
+              '</tr>';
+          }
+          perHtml += '</tbody></table>';
+
+          // Add scenario insights
+          const scenarioInsights = runInsights.filter(i => i.scenario === key);
+          if (scenarioInsights.length > 0) {
+            scenarioInsights.slice(0, 2).forEach(insight => {
+              perHtml += `<div class=\"insight\">${insight.insight}</div>`;
+            });
+          }
+        }
+        perHtml += '</div>'; // Close container
+        await fs.writeFile(path.join(rp, 'index.html'), perHtml);
+
+        // Enhanced run link with date
+        const timestamp = name.includes('-') ? name.split('-').slice(-3).join('-') : name;
+        runLinks += `\n<tr><td><a href=\"runs/${encodeURI(name)}/index.html\">${htmlEscape(name)}</a></td><td>${benchFiles.length}</td><td>${htmlEscape(present)}</td><td>${htmlEscape(timestamp)}</td></tr>`;
+      } catch {}
+    }
+  } catch {}
+
   let out = '';
   out += '<!doctype html><meta charset="utf-8"/>';
   out += '<title>Elide-Bench: Performance Analysis</title>';
@@ -317,6 +449,18 @@ async function main() {
   out += '<div class="container">';
   out += '<h1>🚀 Elide-Bench: Performance Analysis</h1>';
   out += '<div class="sub">Comprehensive runtime performance comparison across streaming and HTTP workloads</div>';
+
+  // Historical runs FIRST (moved to top for better UX)
+  if (typeof runLinks !== 'undefined' && runLinks) {
+    out += '<h2>📁 Historical Runs</h2>';
+    out += '<div class="sub">Individual benchmark runs with detailed per-run analysis</div>';
+    out += '<table><thead><tr><th>Run ID</th><th>Tests</th><th>Frameworks</th><th>Date</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
+    if (latestName) {
+      out += `<div style="margin: 16px 0; padding: 12px; background: #d1ecf1; border-radius: 6px;">`;
+      out += `<strong>📊 Latest Run:</strong> <a href="runs/${encodeURI(latestName)}/index.html">${htmlEscape(latestName)}</a>`;
+      out += `</div>`;
+    }
+  }
 
   // Executive Summary
   out += '<div class="summary">';
@@ -529,150 +673,6 @@ async function main() {
     }
   }
 
-  // Per-run folders under results/runs/* → generate a run index and list here
-  const runsRoot = path.join(resultsDir, 'runs');
-  let runLinks = '';
-  let latestName = '';
-
-  try {
-    const names = await fs.readdir(runsRoot);
-    for (const name of names.sort()) {
-      const rp = path.join(runsRoot, name);
-      try {
-        latestName = name; // track last name in sorted order
-
-        const st = await fs.stat(rp);
-        if (!st.isDirectory()) continue;
-        const benchFiles = (await fs.readdir(rp)).filter(f=>f.startsWith('bench-') && f.endsWith('.html')).sort();
-        // Build per-run index from bench files in this folder
-        const perEntries = [];
-        for (const f of benchFiles) {
-          const html = await fs.readFile(path.join(rp, f), 'utf8');
-          const metrics = parseMetrics(html);
-          const meta = labelFromFilename(f);
-          const conc = Number.isFinite(metrics.concurrency) ? metrics.concurrency : meta.conc;
-          const total = Number.isFinite(metrics.total) ? metrics.total : meta.total;
-          perEntries.push({ file: f, ...meta, ...metrics, concurrency: conc, total });
-        }
-        // group by scenario
-        const perScenarios = new Map();
-        for (const e of perEntries) {
-          const key = `${e.concurrency}x${e.total}`;
-          if (!perScenarios.has(key)) perScenarios.set(key, []);
-          perScenarios.get(key).push(e);
-        }
-        const keys = Array.from(perScenarios.keys()).sort((a,b)=>{
-          const [ac,at]=a.split('x').map(Number); const [bc,bt]=b.split('x').map(Number); return ac-bc || at-bt;
-        });
-        const present = Array.from(new Set(perEntries.map(e=>e.server))).sort().join(', ');
-        const runInsights = generateComparativeAnalysis(perScenarios);
-        const runSummary = generateExecutiveSummary(perScenarios, runInsights);
-
-        let perHtml = '<!doctype html><meta charset="utf-8"/><title>Elide-Bench Run: '+htmlEscape(name)+'</title>'+
-                      `<style>
-                        body { font: 14px system-ui, 'Segoe UI', Arial; margin: 20px; background: #f8f9fa; }
-                        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                        table { border-collapse: collapse; margin: 12px 0; width: 100%; }
-                        td, th { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
-                        th { background: #f8f9fa; font-weight: 600; }
-                        h1, h2 { color: #495057; }
-                        h3 { color: #6c757d; }
-                        .sub { color: #6c757d; font-size: 12px; margin-bottom: 16px; }
-                        .hdr { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
-                        .summary { background: #e7f3ff; padding: 16px; border-radius: 6px; margin: 16px 0; }
-                        .insight { background: #f8f9fa; padding: 8px; margin: 4px 0; border-left: 3px solid #0d6efd; border-radius: 3px; font-size: 13px; }
-                        .perf-better { color: #198754; font-weight: 600; }
-                        .perf-worse { color: #dc3545; font-weight: 600; }
-                        .perf-neutral { color: #6c757d; }
-                        .metric-table td:nth-child(3), .metric-table td:nth-child(4), .metric-table td:nth-child(5), .metric-table td:nth-child(6), .metric-table td:nth-child(7) { text-align: right; font-family: monospace; }
-                        button { padding: 6px 12px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; }
-                        button:hover { background: #0b5ed7; }
-                        a { color: #0d6efd; text-decoration: none; }
-                        a:hover { text-decoration: underline; }
-                      </style>`+
-                      '<div class="container">'+
-                      `<div class="hdr"><h1 style="margin:0">🚀 Bench Run: ${htmlEscape(name)}</h1><button onclick="navigator.clipboard.writeText(location.href)">📋 Copy Link</button><a href="../../index.html">← Back to Results</a></div>`+
-                      `<div class="sub">Frameworks tested: ${htmlEscape(present)} • ${benchFiles.length} individual reports • Generated ${new Date().toLocaleString()}</div>`;
-
-        // Add run summary
-        if (runSummary.significantInsights > 0) {
-          perHtml += '<div class="summary">';
-          perHtml += '<h3 style="margin-top: 0;">📊 Run Summary</h3>';
-          perHtml += `<p><strong>${runSummary.totalTests}</strong> tests across <strong>${runSummary.totalScenarios}</strong> scenarios</p>`;
-          perHtml += `<p><strong>${runSummary.significantInsights}</strong> significant performance differences identified</p>`;
-          if (runSummary.topInsight) {
-            perHtml += `<p><strong>Key Finding:</strong> ${runSummary.topInsight.insight}</p>`;
-          }
-          perHtml += '</div>';
-        }
-
-        for (const key of keys) {
-          const rows = perScenarios.get(key);
-          rows.sort((a,b)=>{ const pri={elide:0,'elide-rt':1,express:2,fastapi:3,flask:4}; return (pri[a.server]??9)-(pri[b.server]??9); });
-          const baseline = rows.find(r => r.server === 'elide') || rows.find(r => r.server === 'elide-rt');
-
-          perHtml += `<h3>Scenario ${htmlEscape(key)}</h3>`;
-          perHtml += '<table class="metric-table"><thead><tr>'+
-                     '<th>Framework</th><th>Report</th><th>RPS</th><th>TTFT P50 (ms)</th><th>TTFT P95 (ms)</th><th>TTFT P99 (ms)</th><th>Duration P95 (ms)</th>'+
-                     '</tr></thead><tbody>';
-
-          for (const r of rows) {
-            const getComparisonClass = (metric, value) => {
-              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return 'perf-neutral';
-              const diff = calculatePercentDiff(baseline[metric], value);
-              if (Math.abs(diff) < 5) return 'perf-neutral';
-              const higherIsBetter = metric === 'rps';
-              const isBetter = higherIsBetter ? diff > 0 : diff < 0;
-              return isBetter ? 'perf-better' : 'perf-worse';
-            };
-
-            const getComparisonText = (metric, value) => {
-              if (!baseline || r.server === baseline.server || !value || !baseline[metric]) return fmt(value);
-              const diff = calculatePercentDiff(baseline[metric], value);
-              if (Math.abs(diff) < 5) return fmt(value);
-              return `${fmt(value)} (${fmtPercent(diff)})`;
-            };
-
-            perHtml += '<tr>'+
-              `<td><strong>${htmlEscape(r.server)}</strong></td>`+
-              `<td><a href="${encodeURI(r.file)}">${htmlEscape(r.file.replace('bench-', '').replace('.html', ''))}</a></td>`+
-              `<td class="${getComparisonClass('rps', r.rps)}">${getComparisonText('rps', r.rps)}</td>`+
-              `<td class="${getComparisonClass('ttft_p50', r.ttft_p50)}">${getComparisonText('ttft_p50', r.ttft_p50)}</td>`+
-              `<td class="${getComparisonClass('ttft_p95', r.ttft_p95)}">${getComparisonText('ttft_p95', r.ttft_p95)}</td>`+
-              `<td class="${getComparisonClass('ttft_p99', r.ttft_p99)}">${getComparisonText('ttft_p99', r.ttft_p99)}</td>`+
-              `<td class="${getComparisonClass('dur_p95', r.dur_p95)}">${getComparisonText('dur_p95', r.dur_p95)}</td>`+
-              '</tr>';
-          }
-          perHtml += '</tbody></table>';
-
-          // Add scenario insights
-          const scenarioInsights = runInsights.filter(i => i.scenario === key);
-          if (scenarioInsights.length > 0) {
-            scenarioInsights.slice(0, 2).forEach(insight => {
-              perHtml += `<div class="insight">${insight.insight}</div>`;
-            });
-          }
-        }
-        perHtml += '</div>'; // Close container
-        await fs.writeFile(path.join(rp, 'index.html'), perHtml);
-
-        // Enhanced run link with date
-        const timestamp = name.includes('-') ? name.split('-').slice(-3).join('-') : name;
-        runLinks += `\n<tr><td><a href="runs/${encodeURI(name)}/index.html">${htmlEscape(name)}</a></td><td>${benchFiles.length}</td><td>${htmlEscape(present)}</td><td>${htmlEscape(timestamp)}</td></tr>`;
-      } catch {}
-    }
-  } catch {}
-  if (runLinks) {
-    out += '<h2>📁 Historical Runs</h2>';
-    out += '<div class="sub">Individual benchmark runs with detailed per-run analysis</div>';
-    out += '<table><thead><tr><th>Run ID</th><th>Tests</th><th>Frameworks</th><th>Date</th></tr></thead><tbody>'+runLinks+'\n</tbody></table>';
-  }
-
-  if (latestName) {
-    out += `<div style="margin: 16px 0; padding: 12px; background: #d1ecf1; border-radius: 6px;">`;
-    out += `<strong>📊 Latest Run:</strong> <a href="runs/${encodeURI(latestName)}/index.html">${htmlEscape(latestName)}</a>`;
-    out += `</div>`;
-  }
 
   if (uiRuns.length) {
     out += '<h2>🖥️ Interactive Test Runs</h2>';

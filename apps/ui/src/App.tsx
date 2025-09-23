@@ -102,45 +102,19 @@ export default function App() {
   }
 
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'300px 1fr', height:'100vh' }}>
-      <aside style={{ padding:12, borderRight:'1px solid #ddd' }}>
-        <h3>Settings</h3>
-        <label>Runtime
-          <select value={settings.runtime} onChange={e=>setSettings(s=>({ ...s, runtime:e.target.value as any }))}>
-            <option value="node-raw">Node (raw)</option>
-            <option value="docker">Docker</option>
-          </select>
-        </label>
-        <label>Base URL
-          <input value={settings.baseURL} onChange={e=>setSettings(s=>({ ...s, baseURL:e.target.value }))} />
-        </label>
-        <label>API Key
-          <input value={settings.apiKey} onChange={e=>setSettings(s=>({ ...s, apiKey:e.target.value }))} />
-        </label>
-        <label>Model
-          <input value={settings.model} onChange={e=>setSettings(s=>({ ...s, model:e.target.value }))} />
-        </label>
-        <label>
-          <input type="checkbox" checked={showReasoning} onChange={e=>setShowReasoning(e.target.checked)} /> Show reasoning
-        </label>
-        <button onClick={()=>localStorage.removeItem('settings')}>Reset</button>
-      </aside>
-      <main style={{ padding:12, overflowY:'auto' }}>
+    <div style={{ height:'100vh', overflow:'hidden' }}>
+      <main style={{ padding:12, overflowY:'auto', height:'100%' }}>
         <h2>Elide-Bench</h2>
-        <div style={{ display:'flex', gap:12, alignItems:'center', margin:'4px 0' }}>
-          <a href="/results/index.html" target="_blank" rel="noreferrer">Results index</a>
-          <a href="/metrics" target="_blank" rel="noreferrer">Metrics</a>
-        </div>
 
         <ErrorBoundary>
-          <BenchPanel activeTab={activeTab} setActiveTab={setActiveTab} settings={settings} />
+          <BenchPanel activeTab={activeTab} setActiveTab={setActiveTab} settings={settings} setSettings={setSettings} />
         </ErrorBoundary>
       </main>
     </div>
   )
 }
 
-function BenchPanel({ activeTab, setActiveTab, settings }: any) {
+function BenchPanel({ activeTab, setActiveTab, settings, setSettings }: any) {
   const [target, setTarget] = useState('http://localhost:8080')
   const [modesSuite, setModesSuite] = useState<string[]>(['sse','micro-plain','micro-chunked'])
   const [concList, setConcList] = useState<number[]>([8,32,64,128])
@@ -177,6 +151,90 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
       </svg>
     )
   }
+  function ChatDemo({ settings, setSettings }: any) {
+    const [input, setInput] = useState('')
+    const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([])
+    const [streaming, setStreaming] = useState(false)
+    const taRef = useRef<HTMLTextAreaElement | null>(null)
+
+    async function send() {
+      if (!input.trim() || streaming) return
+      const userMsg = { role: 'user' as const, content: input }
+      setMessages(m => [...m, userMsg])
+      setInput('')
+      setStreaming(true)
+      try {
+        const resp = await fetch('/api/chat/completions', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {})
+          },
+          body: JSON.stringify({
+            model: settings.model || 'claude-3-5-sonnet',
+            messages: [...messages, userMsg],
+            stream: true,
+            runtime: settings.runtime || 'elide',
+            baseURL: settings.baseURL || 'http://localhost:8084',
+          })
+        })
+        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let acc = ''
+        setMessages(m => [...m, { role: 'assistant', content: '' }])
+        let idx = -1
+        setMessages(m => { idx = m.length - 1; return m })
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          acc += decoder.decode(value, { stream: true })
+          setMessages(m => {
+            const copy = [...m]
+            copy[idx] = { role: 'assistant', content: acc }
+            return copy
+          })
+        }
+      } catch (e) {
+        setMessages(m => [...m, { role: 'assistant', content: `Error: ${(e as Error).message}` }])
+      } finally {
+        setStreaming(false)
+        taRef.current?.focus()
+      }
+    }
+
+    return (
+      <div style={{ border: '1px solid #dee2e6', borderRadius: 6, padding: 12, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12, marginBottom: 12 }}>
+          <label>Base URL <input value={settings.baseURL} onChange={e => setSettings((s: any) => ({ ...s, baseURL: e.target.value }))} /></label>
+          <label>API Key <input value={settings.apiKey} onChange={e => setSettings((s: any) => ({ ...s, apiKey: e.target.value }))} /></label>
+          <label>Model <input value={settings.model} onChange={e => setSettings((s: any) => ({ ...s, model: e.target.value }))} /></label>
+        </div>
+        <div style={{ border: '1px solid #dee2e6', borderRadius: 6, height: 240, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, padding: 8, overflowY: 'auto', background: '#f8f9fa' }}>
+            {messages.length === 0 ? (
+              <p style={{ color: '#6c757d', fontStyle: 'italic', textAlign: 'center', marginTop: 20 }}>Local model chat demo. Type a prompt below.</p>
+            ) : (
+              messages.map((m, i) => (
+                <div key={i} style={{ marginBottom: 8 }}>
+                  <div style={{ fontWeight: 'bold', color: m.role === 'user' ? '#0d6efd' : '#198754' }}>{m.role === 'user' ? 'You' : 'Assistant'}</div>
+                  <div style={{ background: 'white', padding: 6, border: '1px solid #dee2e6', borderRadius: 4 }}>{m.content}</div>
+                </div>
+              ))
+            )}
+            {streaming && <div style={{ color: '#6c757d', fontStyle: 'italic' }}>Assistant is typing...</div>}
+          </div>
+          <div style={{ padding: 8, borderTop: '1px solid #dee2e6', background: 'white' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Ask the local model..." style={{ flex: 1, minHeight: 48 }} disabled={streaming} />
+              <button onClick={send} disabled={streaming || !input.trim()} style={{ padding: '6px 12px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 4 }}>{streaming ? 'Sending...' : 'Send'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
 
   const [total, setTotal] = useState(256)
   const [bytes, setBytes] = useState(64)
@@ -412,22 +470,29 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   const [targetsHealth, setTargetsHealth] = useState<{['node-raw']?:boolean;elide?:boolean;express?:boolean;fastapi?:boolean;flask?:boolean}|null>(null)
   const [dockerAvail, setDockerAvail] = useState<boolean|null>(null)
   const [probingTargets, setProbingTargets] = useState(false)
+  const [startingAll, setStartingAll] = useState(false)
+  const [healthError, setHealthError] = useState<string|null>(null)
   async function probeTargets(){
     try{
       setProbingTargets(true)
-      const r = await fetch('/bench/health')
+      const r = await fetch('/bench/health?elideBase='+encodeURIComponent(elideRtBase||''))
       const j = await r.json()
-      if (j?.ok && j.targets) setTargetsHealth(j.targets)
-      else setTargetsHealth(null)
+      if (j?.ok && j.targets) {
+        setTargetsHealth(j.targets); setHealthError(null)
+        // auto-enable Elide target if detected healthy
+        try { if (j.targets.elide === true && !targets.elide) setTargets(prev => ({ ...prev, elide: true })) } catch {}
+      } else {
+        setTargetsHealth(null); setHealthError('Backend responded without targets')
+      }
       setDockerAvail(j?.tools?.docker===true)
-    }catch{ setTargetsHealth(null); setDockerAvail(null) }
+    }catch(e:any){ setTargetsHealth(null); setDockerAvail(null); setHealthError('Backend unreachable on :8080. Is the server running?') }
     finally { setProbingTargets(false) }
   }
 
   useEffect(()=>{ probeTargets().catch(()=>{}) },[])
 
 
-  const [targets, setTargets] = useState<{['node-raw']:boolean;elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ 'node-raw':true, elide:false, express:true, fastapi:true, flask:true })
+  const [targets, setTargets] = useState<{['node-raw']:boolean;elide:boolean;express:boolean;fastapi:boolean;flask:boolean}>({ 'node-raw':true, elide:true, express:true, fastapi:true, flask:true })
   function toggleTarget(name: 'node-raw'|'elide'|'express'|'fastapi'|'flask'){
     setTargets(prev => ({ ...prev, [name]: !prev[name as keyof typeof prev] as any }))
   }
@@ -437,9 +502,27 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   }
 
 
+  async function startAllServers(){
+    try{
+      setStartingAll(true)
+      await fetch('/bench/start-all', { method:'POST' })
+      for (let i=0;i<8;i++) {
+        try { await probeTargets() } catch {}
+        if (targetsHealth && (targetsHealth['node-raw'] || targetsHealth.express || targetsHealth.fastapi)) break
+        await new Promise(r=>setTimeout(r, 1000))
+      }
+    } catch (e:any) {
+      setHealthError('Failed to start servers. Try: pnpm -C apps/server-elide dev')
+    } finally {
+      setStartingAll(false)
+    }
+  }
+
+
   async function runCliSuite(){
     try{
       setCliStatus('starting CLI run...')
+
       const tiers = (customConc || '8,32,64,128,256,512,1024,2048,4096')
         .split(',').map(s=>Number(s.trim())).filter(n=>Number.isFinite(n) && n>0)
 
@@ -491,6 +574,41 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
       })
     }catch(e:any){ setCliStatus('error: '+(e?.message||String(e))) }
   }
+  async function runQuickCli(){
+    try{
+      setCliStatus('starting quick run...')
+      const selectedTargets = Object.entries(targets).filter(([,v])=>!!v).map(([k])=>k)
+      const resp = await fetch('/bench/run-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
+        concurrency: [concurrency],
+        totals: [Math.max(4, total)],
+        frames, delay_ms: delayMs, bytes, cpu_spin_ms: cpuSpinMs,
+        fanout, fanout_delay_ms: 0, gzip,
+        targets: selectedTargets,
+        elideRtBase, elideRtCmd,
+        startServers: false, wslNode: false, wslFastapi: false,
+      })})
+      const j = await resp.json()
+      if (!j.ok){ setCliStatus('quick run failed to start: '+(j.error||'unknown')); return }
+      setCliPid(j.pid)
+      setCliStatus('running (pid '+j.pid+')...')
+      setCliSamples([]); setCliLinks({}); setCliLogs([]); setCliProgress([])
+      if (cliES.current) { try{ cliES.current.close() }catch{}; cliES.current = null }
+      const pid = j.pid
+      const es = new EventSource('/bench/run-cli/stream?pid='+pid)
+      cliES.current = es
+      es.addEventListener('status', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); const rel = String(d.log||'').replace(/^packages[\\\/ ]bench[\\\/ ]results[\\\/ ]/,'/results/'); setCliStatus(`status: ${d.status} (log: ${rel})`) }catch{}
+      })
+      es.addEventListener('log', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); setCliLogs(prev=>{ const arr = prev.concat({ text: d?.text ?? String(ev.data), level: d?.level }); return arr.length>400?arr.slice(-400):arr }) }catch{ setCliLogs(prev=>prev.concat({ text: String(ev.data) })) }
+      })
+      es.addEventListener('done', (ev:any)=>{
+        try{ const d = JSON.parse(ev.data); const log = String(d.log||'').replace(/^packages[\\\/ ]bench[\\\/ ]results[\\\/ ]/,'/results/'); setCliLinks({ log, index: String(d.index||'/results/index.html') }); setCliStatus(`done (status: ${d.status})`) }catch{}
+        try{ es.close() }catch{}; cliES.current = null
+      })
+    }catch(e:any){ setCliStatus('error: '+(e?.message||String(e))) }
+  }
+
 
   async function cancelCli(){
     if (!cliPid) return
@@ -524,26 +642,49 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
     <div style={{ background: '#f8f9fa', padding: 12, borderRadius: 6, marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, color: '#333' }}>Target Status</h3>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
+            <input type="checkbox" checked={targets['node-raw']} onChange={() => toggleTarget('node-raw')} />
             Node (raw) {targetsHealth ? (targetsHealth['node-raw'] ? '🟢' : '🔴') : '⚪'}
-          </span>
-          <span title={`Elide (runtime): ${targetsHealth?.elide === true ? 'up' : targetsHealth?.elide === false ? 'down' : '?'}`}>
+          </label>
+          <label title={`Elide (runtime): ${targetsHealth?.elide === true ? 'up' : targetsHealth?.elide === false ? 'down' : '?'}`}>
+            <input type="checkbox" checked={targets.elide} onChange={() => toggleTarget('elide')} />
             Elide {targetsHealth ? (targetsHealth.elide ? '🟢' : '🔴') : '⚪'}
-          </span>
-          <span title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
+          </label>
+          <label title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
+            <input type="checkbox" checked={targets.express} onChange={() => toggleTarget('express')} />
             Express {targetsHealth ? (targetsHealth.express ? '🟢' : '🔴') : '⚪'}
-          </span>
-          <span title={`FastAPI: ${targetsHealth?.fastapi === true ? 'up' : targetsHealth?.fastapi === false ? 'down' : '?'}`}>
+          </label>
+          <label title={`FastAPI: ${targetsHealth?.fastapi === true ? 'up' : targetsHealth?.fastapi === false ? 'down' : '?'}`}>
+            <input type="checkbox" checked={targets.fastapi} onChange={() => toggleTarget('fastapi')} />
             FastAPI {targetsHealth ? (targetsHealth.fastapi ? '🟢' : '🔴') : '⚪'}
-          </span>
-          <span title={`Flask: ${targetsHealth?.flask === true ? 'up' : targetsHealth?.flask === false ? 'down' : '?'}`}>
+          </label>
+          <label title={`Flask: ${targetsHealth?.flask === true ? 'up' : targetsHealth?.flask === false ? 'down' : '?'}`}>
+            <input type="checkbox" checked={targets.flask} onChange={() => toggleTarget('flask')} />
             Flask {targetsHealth ? (targetsHealth.flask ? '🟢' : '🔴') : '⚪'}
-          </span>
-          <button onClick={probeTargets} disabled={probingTargets} style={{ padding: '4px 8px', fontSize: 12 }}>
-            {probingTargets ? 'Probing…' : 'Refresh'}
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={async () => { await startAllServers(); const el = document.getElementById('sec-comparative') as HTMLDetailsElement | null; if (el) el.open = true }} disabled={startingAll} style={{ padding: '6px 12px' }}>
+            {startingAll ? 'Starting…' : 'Start all servers'}
+          </button>
+          <button onClick={runCliSuite} style={{ padding: '6px 12px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 4 }}>Run Full Suite</button>
+          <button onClick={probeTargets} disabled={probingTargets} style={{ padding: '6px 12px' }}>
+            {probingTargets ? 'Checking…' : 'Check Health'}
           </button>
         </div>
+        <div style={{ fontSize: 12, color: '#6c757d', marginTop: 4 }}>Hint: Run Full Suite is selected by default. Open accordions below to deselect specific tests or analysis.</div>
+
+        {healthError && (
+          <div style={{ color: '#dc3545', fontSize: 12 }}>
+            ⚠️ {healthError}
+            <div style={{ marginTop: 4, color: '#6c757d' }}>
+              Tip: start the backend in another terminal:
+              <code style={{ marginLeft: 6, background:'#f8f9fa', padding:'1px 4px', borderRadius: 3 }}>pnpm -C apps/server-elide dev</code>
+              &nbsp;or click “Start all servers”.
+            </div>
+          </div>
+        )}
         {dockerAvail === false && (
           <div style={{ color: '#d63384', fontSize: 12 }}>
             ⚠️ Docker not detected - Flask requires Docker Desktop
@@ -562,18 +703,17 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
 
       <TargetHealthDashboard />
 
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #ddd' }}>
-          <TabButton id="streaming" label="Streaming Tests" active={activeTab === 'streaming'} onClick={() => setActiveTab('streaming')} />
-          <TabButton id="http" label="HTTP Tests" active={activeTab === 'http'} onClick={() => setActiveTab('http')} />
-          <TabButton id="concurrency" label="Concurrency Analysis" active={activeTab === 'concurrency'} onClick={() => setActiveTab('concurrency')} />
-          <TabButton id="comparative" label="Comparative Analysis" active={activeTab === 'comparative'} onClick={() => setActiveTab('comparative')} />
-          <TabButton id="results" label="Results & Trends" active={activeTab === 'results'} onClick={() => setActiveTab('results')} />
-          <TabButton id="chat" label="Interactive Analysis" active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} />
-        </div>
+      <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginBottom: 8 }}>
+        <button onClick={()=>{
+          document.querySelectorAll('details').forEach(d=> (d as HTMLDetailsElement).open = true)
+        }} style={{ padding:'4px 8px' }}>Expand all</button>
+        <button onClick={()=>{
+          document.querySelectorAll('details').forEach(d=> (d as HTMLDetailsElement).open = false)
+          const first = document.getElementById('sec-comparative') as HTMLDetailsElement|null; if (first) first.open = true
+        }} style={{ padding:'4px 8px' }}>Collapse all</button>
       </div>
 
-      <div style={{ border: '1px solid #ddd', borderTop: 'none', padding: 16, background: 'white', minHeight: 400 }}>
+      <div style={{ border: '1px solid #ddd', padding: 16, background: 'white', minHeight: 400 }}>
         {cliSamples.length > 2 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 16px 0', padding: 8, background: '#f8f9fa', borderRadius: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -596,9 +736,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
           </div>
         )}
 
-        {activeTab === 'streaming' && (
-          <div>
-            <h3 style={{ marginTop: 0, color: '#495057' }}>SSE Streaming Performance</h3>
+        <details id="sec-streaming">
+          <summary style={{ cursor:'pointer', fontWeight:600 }}>Streaming Tests</summary>
+          <div style={{ marginTop: 8 }}>
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
               Tests Time-To-First-Token (TTFT), streaming throughput, and memory efficiency using synthetic Server-Sent Events.
               Isolates pure serving overhead without upstream LLM calls.
@@ -614,6 +754,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               <label title="Total requests across all connections">
                 Total Requests <input type="number" value={total} onChange={e => setTotal(Number(e.target.value))} style={{ width: '100%', marginTop: 4 }} />
               </label>
+                <button onClick={runQuickCli} disabled={false} style={{ padding: '8px 16px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 4 }}>
+                  Run Selected Frameworks (Quick)
+                </button>
               <label title="Bytes per SSE frame">
                 Bytes per Frame <input type="number" value={bytes} onChange={e => setBytes(Number(e.target.value))} style={{ width: '100%', marginTop: 4 }} />
               </label>
@@ -638,6 +781,9 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               </label>
             </div>
 
+            {liveModel && (
+              <ChatDemo settings={settings} setSettings={setSettings} />
+            )}
 
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
               <button onClick={runBench} disabled={running} style={{ padding: '8px 16px' }}>
@@ -646,13 +792,16 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               <button onClick={runFullSuite} disabled={running} style={{ padding: '8px 16px' }}>
                 {running ? 'Running...' : 'Run Multi-Tier Suite'}
               </button>
+              <button onClick={runQuickCli} disabled={false} style={{ padding: '8px 16px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 4 }}>
+                Run Selected Frameworks (Quick)
+              </button>
             </div>
           </div>
-        )}
+        </details>
 
-        {activeTab === 'http' && (
-          <div>
-            <h3 style={{ marginTop: 0, color: '#495057' }}>HTTP Response Performance</h3>
+        <details id="sec-http">
+          <summary style={{ cursor:'pointer', fontWeight:600 }}>HTTP Tests</summary>
+          <div style={{ marginTop: 8 }}>
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
               Tests request/response patterns with plain and chunked transfer encoding.
               Measures latency, throughput, and chunking efficiency.
@@ -693,15 +842,18 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               <button onClick={runBench} disabled={running} style={{ padding: '8px 16px' }}>
                 {running ? 'Running...' : 'Run Single Test'}
               </button>
+              <button onClick={runQuickCli} disabled={false} style={{ padding: '8px 16px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 4 }}>
+                Run Selected Frameworks (Quick)
+              </button>
               <button onClick={runFullSuite} disabled={running} style={{ padding: '8px 16px' }}>
                 {running ? 'Running...' : 'Run Multi-Tier Suite'}
               </button>
             </div>
           </div>
-        )}
-        {activeTab === 'concurrency' && (
-          <div>
-            <h3 style={{ marginTop: 0, color: '#495057' }}>Concurrency & Load Analysis</h3>
+        </details>
+        <details id="sec-concurrency">
+          <summary style={{ cursor:'pointer', fontWeight:600 }}>Concurrency Analysis</summary>
+          <div style={{ marginTop: 8 }}>
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
               Find maximum sustainable load and analyze scaling characteristics.
               Binary search finds the apex concurrency under performance thresholds.
@@ -740,39 +892,25 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               </button>
             </div>
           </div>
-        )}
+        </details>
 
-        {activeTab === 'comparative' && (
-          <div>
-            <h3 style={{ marginTop: 0, color: '#495057' }}>Multi-Framework Comparison</h3>
+        <details id="sec-comparative" open>
+          <summary style={{ cursor:'pointer', fontWeight:600 }}>Run Full Suite (Multi-Framework)</summary>
+          <div style={{ marginTop: 8 }}>
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
-              Run comprehensive benchmarks across selected frameworks and test modes.
-              Automatically starts servers and generates comparative analysis.
+              Default is to run the full comparative suite. Open accordions below to deselect tests or analysis as needed.
             </p>
 
             <div style={{ marginBottom: 16 }}>
-              <h4 style={{ margin: '0 0 8px 0', color: '#6c757d' }}>Target Frameworks</h4>
+              <p style={{ margin: '0 0 8px 0', color: '#6c757d' }}>Framework selection is controlled above in Target Status. Configure Elide runtime details below if needed.</p>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <label title={`Node (raw): ${targetsHealth?.['node-raw'] === true ? 'up' : targetsHealth?.['node-raw'] === false ? 'down' : '?'}`}>
-                  <input type="checkbox" checked={targets['node-raw']} onChange={() => toggleTarget('node-raw')} />
-                  Node (raw) {targetsHealth ? (targetsHealth['node-raw'] ? '🟢' : '🔴') : '⚪'}
-                </label>
-                <label title={`Express: ${targetsHealth?.express === true ? 'up' : targetsHealth?.express === false ? 'down' : '?'}`}>
-                  <input type="checkbox" checked={targets.express} onChange={() => toggleTarget('express')} />
-                  Express {targetsHealth ? (targetsHealth.express ? '🟢' : '🔴') : '⚪'}
-                </label>
-                <label title={`FastAPI: ${targetsHealth?.fastapi === true ? 'up' : targetsHealth?.fastapi === false ? 'down' : '?'}`}>
-                  <input type="checkbox" checked={targets.fastapi} onChange={() => toggleTarget('fastapi')} />
-                  FastAPI {targetsHealth ? (targetsHealth.fastapi ? '🟢' : '🔴') : '⚪'}
-                </label>
+
+
 
 	            <div style={{ marginTop: 8 }}>
 	              <details>
-	                <summary style={{ cursor: 'pointer' }}>Elide (runtime) — optional</summary>
+	                <summary style={{ cursor: 'pointer' }}>Elide (runtime)</summary>
 	                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-	                  <label title="Include Elide runtime in the run (if configured)">
-	                    <input type="checkbox" checked={!!targets.elide} onChange={() => toggleTarget('elide')} /> Enable Elide (runtime)
-	                  </label>
 	                  <label title="Base URL of the Elide runtime (used as-is if reachable)">
 	                    Base URL <input placeholder="http://localhost:8084" value={elideRtBase} onChange={e => setElideRtBase(e.target.value)} />
 	                  </label>
@@ -782,21 +920,18 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
 	                </div>
 	                <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6 }}>
 	                  If Base URL responds at <code>/healthz</code>, it will be used. If Launch command is provided and “Start servers” is on, the suite will try to start it.
+	                </div>
+	              </details>
+	            </div>
+
+
+              </div>
               <div style={{ marginTop: 8 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <input type="checkbox" checked={startServers} onChange={e => setStartServers(e.target.checked)} /> Start servers (all targets)
                 </label>
               </div>
 
-	                </div>
-	              </details>
-	            </div>
-
-                <label title={`Flask: ${targetsHealth?.flask === true ? 'up' : targetsHealth?.flask === false ? 'down' : '?'}`}>
-                  <input type="checkbox" checked={targets.flask} onChange={() => toggleTarget('flask')} />
-                  Flask {targetsHealth ? (targetsHealth.flask ? '🟢' : '🔴') : '⚪'}
-                </label>
-              </div>
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -853,14 +988,20 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               </div>
             )}
           </div>
-        )}
+        </details>
 
-        {activeTab === 'results' && (
-          <div>
+        <details id="sec-results">
+          <summary style={{ cursor:'pointer', fontWeight:600 }}>Results & Trends</summary>
+          <div style={{ marginTop: 8 }}>
             <h3 style={{ marginTop: 0, color: '#495057' }}>Results & Trends Dashboard</h3>
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
               Integrated performance analysis with real-time insights, historical trends, and actionable recommendations.
             </p>
+
+            <div style={{ display:'flex', gap:12, alignItems:'center', margin:'4px 0' }}>
+              <a href="/results/index.html" target="_blank" rel="noreferrer">Results index</a>
+              <a href="/metrics" target="_blank" rel="noreferrer">Metrics</a>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 24 }}>
               <div style={{ padding: 16, border: '1px solid #dee2e6', borderRadius: 6, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
@@ -921,7 +1062,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               <div style={{ padding: 16, border: '1px solid #dee2e6', borderRadius: 6, background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: 'white' }}>
                 <h4 style={{ margin: '0 0 12px 0', color: 'white' }}>🎯 Quick Actions</h4>
                   <button
-                    onClick={() => { setStartServers(true); setActiveTab('comparative') }}
+                    onClick={() => { setStartServers(true); const el = document.getElementById('sec-comparative') as HTMLDetailsElement | null; if (el) { el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }}
                     style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
                   >
                     🟢 Start all servers
@@ -1020,11 +1161,13 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
               </div>
             )}
           </div>
-        )}
+        </details>
 
-        {activeTab === 'chat' && (
-          <div>
-            <h3 style={{ marginTop: 0, color: '#495057' }}>Interactive Analysis</h3>
+      </div>
+    </div>
+  )
+
+{/*
             <p style={{ color: '#6c757d', marginBottom: 16 }}>
               Chat interface for interactive model testing and analysis.
               Originally designed for OpenHands integration.
@@ -1126,18 +1269,8 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-      </div>
+*/}
 
-      {summary && (
-        <div style={{ marginTop: 16, padding: 12, background: '#f8f9fa', borderRadius: 6, fontFamily: 'monospace', fontSize: 12 }}>
-          <strong>Last Benchmark:</strong> RPS {summary.rps} | TTFT p50/p95/p99: {summary.ttft_p50 ?? '-'} / {summary.ttft_p95 ?? '-'} / {summary.ttft_p99 ?? '-'} ms | Duration p50/p95/p99: {summary.dur_p50} / {summary.dur_p95} / {summary.dur_p99} ms
-        </div>
-      )}
-    </div>
-  )
 }
 
 
