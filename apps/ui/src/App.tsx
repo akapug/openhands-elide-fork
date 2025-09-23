@@ -1027,7 +1027,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
                   </label>
                   <label title="Base URL for API calls">
                     Base URL
-                    <input value={settings.baseUrl} onChange={e => setSettings({ ...settings, baseUrl: e.target.value })} style={{ width: '100%', marginTop: 4 }} />
+                    <input value={settings.baseURL} onChange={e => setSettings({ ...settings, baseURL: e.target.value })} style={{ width: '100%', marginTop: 4 }} />
                   </label>
                   <label title="API key for authentication">
                     API Key
