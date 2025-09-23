@@ -146,7 +146,7 @@ Quick start:
 - Start the servers:
   - `docker compose -f infra/docker-compose.yml up -d elide express fastapi flask`
 - Open UI/bench: http://localhost:8080
-- Optional: run the quad bench (writes HTML under packages/bench/results):
+- Optional: run the bench sweep (writes HTML under packages/bench/results):
   - `docker compose -f infra/docker-compose.yml run --rm bench`
 
 Notes:

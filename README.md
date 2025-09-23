@@ -3,7 +3,7 @@
 A ready‑to‑run fork of OpenHands using Elide as the primary runtime and HTTP server, with Docker fallback. Includes:
 - Elide server with synthetic SSE mode, micro HTTP tests, and Prometheus metrics
 - React UI with live streaming, sparklines, error panels, and CLI orchestration
-- Quad benchmark (Elide vs Express vs FastAPI vs Flask) with per‑run HTML results
+- Bench suite (Node‑raw, Elide, Express, FastAPI, Flask) with per‑run HTML results
 
 ## Prereqs
 - Node 20+ and pnpm 9+: `npm i -g pnpm`
@@ -32,7 +32,7 @@ pnpm -C apps/server-elide start
 - Start the servers:
   - `docker compose -f infra/docker-compose.yml up -d elide express fastapi flask`
 - Open the UI/bench at: http://localhost:8080
-- Optional: run the quad bench (writes HTML under packages/bench/results):
+- Optional: run the bench sweep (writes HTML under packages/bench/results):
   - `docker compose -f infra/docker-compose.yml run --rm bench`
 
 Notes:

@@ -42,11 +42,17 @@ test('chat request increments metrics on error path (no upstream)', async ({ pag
   const beforeReq500 = getCounter(before, 'chat_requests_total', { runtime: 'elide', model: 'openai/gpt-oss-120b', status: '500' })
   const beforeDurCount = getHistCount(before, 'chat_duration_ms', { runtime: 'elide', model: 'openai/gpt-oss-120b' })
 
-  // trigger a request that will 500 upstream
-  await page.goto(url + '/')
-  await page.getByRole('textbox', { name: 'Base URL' }).fill('http://localhost:9/v1')
-  await page.getByRole('button', { name: 'Send' }).click()
-  await expect(page.getByText('[error 500]')).toBeVisible({ timeout: 10000 })
+  // trigger a request that will 500 upstream via direct API call (more robust than UI clicking)
+  const chatRes = await request.post(url + '/api/chat/completions', {
+    data: {
+      model: 'openai/gpt-oss-120b',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      runtime: 'elide',
+      baseURL: 'http://localhost:9/v1'
+    }
+  })
+  expect(chatRes.status()).toBe(500)
 
   // post metrics
   const after = await getMetricsText(url, request)
