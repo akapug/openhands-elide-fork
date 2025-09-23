@@ -125,7 +125,7 @@ export default function App() {
         </label>
         <button onClick={()=>localStorage.removeItem('settings')}>Reset</button>
       </aside>
-      <main style={{ padding:12 }}>
+      <main style={{ padding:12, overflowY:'auto' }}>
         <h2>Elide-Bench</h2>
         <div style={{ display:'flex', gap:12, alignItems:'center', margin:'4px 0' }}>
           <a href="/results/index.html" target="_blank" rel="noreferrer">Results index</a>
@@ -193,6 +193,8 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
   const [apexStart, setApexStart] = useState(32)
   const [tiersCsv, setTiersCsv] = useState('8,32,64,128,256,512,1024,2048,4096')
   const maxTiers = '8,32,64,128,256,512,1024,2048,4096'
+
+  const [startServers, setStartServers] = useState(true)
 
   const [apexMax, setApexMax] = useState(8192)
 
@@ -449,7 +451,7 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
         fanout, fanout_delay_ms: 0, gzip,
         targets: selectedTargets,
         elideRtBase, elideRtCmd,
-        startServers: true, wslNode: false, wslFastapi: false,
+        startServers, wslNode: false, wslFastapi: false,
       })})
       const j = await resp.json()
       if (!j.ok){ setCliStatus('CLI run failed to start: '+(j.error||'unknown')); return }
@@ -780,6 +782,12 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
 	                </div>
 	                <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6 }}>
 	                  If Base URL responds at <code>/healthz</code>, it will be used. If Launch command is provided and “Start servers” is on, the suite will try to start it.
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={startServers} onChange={e => setStartServers(e.target.checked)} /> Start servers (all targets)
+                </label>
+              </div>
+
 	                </div>
 	              </details>
 	            </div>
@@ -912,6 +920,13 @@ function BenchPanel({ activeTab, setActiveTab, settings }: any) {
 
               <div style={{ padding: 16, border: '1px solid #dee2e6', borderRadius: 6, background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: 'white' }}>
                 <h4 style={{ margin: '0 0 12px 0', color: 'white' }}>🎯 Quick Actions</h4>
+                  <button
+                    onClick={() => { setStartServers(true); setActiveTab('comparative') }}
+                    style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                  >
+                    🟢 Start all servers
+                  </button>
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button
                     onClick={() => setActiveTab('comparative')}
