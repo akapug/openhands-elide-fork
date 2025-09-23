@@ -1,4 +1,4 @@
-# OpenHands–Elide Fork
+# Elide‑Bench
 
 A ready‑to‑run fork of OpenHands using Elide as the primary runtime and HTTP server, with Docker fallback. Includes:
 - Elide server with synthetic SSE mode, micro HTTP tests, and Prometheus metrics
